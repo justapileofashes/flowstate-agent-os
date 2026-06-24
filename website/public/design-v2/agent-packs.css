@@ -1,0 +1,47 @@
+/* =========================================================
+   Agent packs — quiet sidebar row, export modal list, toast.
+   Tokens only.
+   ========================================================= */
+.pack-actions {
+  display: flex; align-items: center; gap: 4px;
+  padding: 8px 12px 10px;
+  border-top: 1px solid var(--border);
+}
+.pack-actions-label {
+  font-family: var(--font-mono); font-size: 10px;
+  letter-spacing: 0.12em; text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.pack-list { display: flex; flex-direction: column; gap: 2px; }
+.pack-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 10px; border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: background var(--d-fast) var(--ease);
+}
+.pack-row:hover { background: rgba(240,236,226,0.04); }
+.pack-row.on { background: rgba(240,236,226,0.06); }
+.pack-avatar {
+  width: 22px; height: 22px; flex: 0 0 22px; border-radius: 6px;
+  background: var(--surface-2); border: 1px solid var(--border);
+  display: grid; place-items: center;
+  font-size: 10px; color: var(--ink-muted);
+}
+.pack-name { font-size: 13px; color: var(--ink); min-width: 0; flex: 1;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pack-model { font-size: 10.5px; color: var(--ink-faint); flex-shrink: 0; }
+
+.pack-toast {
+  position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 12px; border-radius: var(--r-md);
+  background: rgba(20,17,14,0.88);
+  box-shadow: var(--shadow-lg);
+  z-index: 60; max-width: 520px;
+  animation: bubble-in var(--d-slow) var(--ease);
+}
+.pack-toast-body { min-width: 0; }
+.pack-toast-title { font-size: 13px; color: var(--ink-strong); }
+.pack-toast-sub { font-size: 10.5px; color: var(--ink-faint); margin-top: 2px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

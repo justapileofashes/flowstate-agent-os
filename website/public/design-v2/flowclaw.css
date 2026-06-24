@@ -1,0 +1,158 @@
+/* =========================================================
+   flowclaw screen styles — uses existing tokens only
+   ========================================================= */
+.flowclaw-page { padding: 32px 48px 80px; max-width: 1100px; margin: 0 auto; }
+
+.fc-head { margin-bottom: 24px; }
+
+.fc-tabbar {
+  display: flex; align-items: center; gap: 10px;
+  padding-bottom: 16px; margin-bottom: 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* kind badge */
+.fc-kind {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-size: 12px; color: var(--ink-muted);
+  font-weight: 500;
+}
+.fc-kind-glyph {
+  display: inline-grid; place-items: center;
+  width: 22px; height: 18px; border-radius: 5px;
+  background: var(--surface-3); border: 1px solid var(--border-strong);
+  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.04em;
+  color: var(--ink); font-weight: 500;
+}
+
+/* connection grid + card */
+.fc-conn-grid {
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px;
+}
+.fc-conn { padding: 16px; display: flex; flex-direction: column; gap: 0;
+  transition: border-color var(--d-base) var(--ease); }
+.fc-conn:hover { border-color: var(--border-strong); }
+.fc-conn-label { font-size: 14px; color: var(--ink-strong); font-weight: 500; margin-top: 12px; }
+.fc-addr { font-size: 12px; color: var(--ink-faint); margin-top: 2px; }
+.fc-errline {
+  margin-top: 10px; padding: 7px 10px;
+  border: 1px solid var(--border-strong); border-radius: var(--r-sm);
+  background: rgba(160,130,120,0.08);
+  color: var(--bad); font-size: 11.5px; font-family: var(--font-mono);
+}
+.fc-conn-meta {
+  display: flex; align-items: baseline; gap: 10px; margin-top: 10px;
+}
+.fc-meta-k {
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--ink-faint); width: 44px; flex: 0 0 44px;
+}
+.fc-meta-v { font-size: 12px; color: var(--ink-muted); }
+.fc-conn-actions {
+  display: flex; align-items: center; gap: 6px;
+  margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border);
+}
+
+/* modal field labels */
+.fc-modal { width: min(560px, calc(100% - 64px)); }
+.fc-field-label {
+  font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--ink-faint); margin-bottom: 7px;
+}
+.fc-row2 { display: flex; gap: 12px; margin-top: 16px; }
+
+.fc-kindpick { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 4px; }
+.fc-kindopt {
+  display: flex; align-items: center; gap: 10px; text-align: left;
+  padding: 12px; border-radius: var(--r-md);
+  background: var(--surface); border: 1px solid var(--border);
+  cursor: pointer; color: var(--ink);
+  transition: border-color var(--d-fast) var(--ease), background var(--d-fast) var(--ease);
+}
+.fc-kindopt:hover { border-color: var(--border-strong); }
+.fc-kindopt.on { border-color: var(--accent); background: var(--surface-2); }
+.fc-kindopt-name { display: block; font-size: 13px; color: var(--ink-strong); font-weight: 500; }
+.fc-kindopt-sub { display: block; font-size: 10.5px; color: var(--ink-faint); margin-top: 2px; }
+
+.fc-modeltags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.fc-modeltag {
+  font-family: var(--font-mono); font-size: 11px;
+  padding: 4px 8px; border-radius: var(--r-sm);
+  background: var(--surface-2); border: 1px solid var(--border);
+  color: var(--ink-muted); cursor: pointer;
+  transition: border-color var(--d-fast) var(--ease), color var(--d-fast) var(--ease);
+}
+.fc-modeltag:hover { border-color: var(--border-strong); color: var(--ink); }
+
+.fc-modal-foot {
+  display: flex; align-items: center; gap: 8px;
+  padding: 14px 18px; border-top: 1px solid var(--border);
+}
+
+/* tasks */
+.fc-task-list { display: flex; flex-direction: column; gap: 8px; }
+.fc-task {
+  display: flex; align-items: center; gap: 16px; padding: 14px 16px;
+  cursor: pointer;
+  transition: border-color var(--d-base) var(--ease), background var(--d-base) var(--ease);
+}
+.fc-task:hover { border-color: var(--border-strong); background: var(--surface-3); }
+.fc-task-main { min-width: 0; flex: 1; }
+.fc-task-name { font-size: 13.5px; color: var(--ink-strong); font-weight: 500; }
+.fc-task-sub { font-size: 11.5px; color: var(--ink-faint); margin-top: 3px; display: flex; gap: 7px; flex-wrap: wrap; }
+.fc-dotsep { color: var(--ink-quiet); }
+.fc-task-meta { display: flex; align-items: center; gap: 14px; }
+.fc-task-next { font-size: 11.5px; color: var(--ink-muted); white-space: nowrap; }
+.fc-task-chev { color: var(--ink-faint); display: inline-flex; }
+
+/* run detail */
+.fc-run-meta {
+  display: flex; flex-wrap: wrap; gap: 18px;
+  padding: 12px 18px; border-bottom: 1px solid var(--border);
+  font-size: 12px; color: var(--ink-muted);
+}
+.fc-run-meta .faint { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; margin-right: 4px; }
+.fc-log {
+  background: #0a0908; margin: 0; padding: 14px 18px;
+  font-family: var(--font-mono); font-size: 12px; line-height: 1.7;
+  height: 320px; overflow-y: auto;
+}
+.fc-log-line { display: flex; gap: 12px; white-space: pre-wrap; }
+.fc-log-t { color: var(--ink-quiet); flex: 0 0 auto; }
+.fc-log-msg { color: var(--ink-muted); }
+.fc-log-line.lvl-info .fc-log-msg { color: var(--ink-faint); }
+.fc-log-line.lvl-dim  .fc-log-msg { color: var(--ink-faint); }
+.fc-log-line.lvl-out  .fc-log-msg { color: var(--ink); }
+.fc-log-line.lvl-good .fc-log-msg { color: var(--good); }
+.fc-log-line.lvl-bad  .fc-log-msg { color: var(--bad); }
+.fc-log-cursor { color: var(--accent); animation: pulse 1.1s var(--ease) infinite; }
+
+/* empty state */
+.fc-empty {
+  display: flex; flex-direction: column; align-items: center;
+  padding: 64px 24px; gap: 8px;
+}
+.fc-empty-mark {
+  width: 52px; height: 52px; border-radius: var(--r-lg);
+  background: var(--surface); border: 1px solid var(--border);
+  display: grid; place-items: center; color: var(--ink-muted);
+  margin-bottom: 8px;
+}
+.fc-empty-title { font-size: 18px; color: var(--ink-strong); font-weight: 400; }
+
+/* skeleton */
+.fc-skel { pointer-events: none; }
+.fc-sk-line {
+  height: 10px; border-radius: 4px;
+  background: linear-gradient(90deg, var(--surface-2) 0%, var(--surface-3) 50%, var(--surface-2) 100%);
+  background-size: 200% 100%;
+  animation: fc-shimmer 1.4s linear infinite;
+}
+@keyframes fc-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fc-sk-line, .fc-log-cursor { animation: none; }
+}

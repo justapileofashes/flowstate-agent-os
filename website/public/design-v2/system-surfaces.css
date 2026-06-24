@@ -1,0 +1,74 @@
+/* =========================================================
+   System surfaces — live resource meters (Dashboard) +
+   export-run busy spinner (chat header).
+   Tokens only. Monochrome. No traffic-light colors.
+   ========================================================= */
+
+/* ---- Surface 3 · live resource meters ---- */
+.rm-strip {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin: 16px 48px 0;
+  max-width: 660px;
+}
+.rm-strip.rm-2up { grid-template-columns: repeat(2, 1fr); max-width: 440px; }
+
+.rm-card {
+  padding: 12px 14px 13px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+}
+.rm-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.rm-label {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.rm-meta {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--ink-quiet);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.rm-value {
+  font-family: var(--font-mono);
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--ink-strong);
+  letter-spacing: -0.01em;
+  margin-top: 6px;
+  font-variant-numeric: tabular-nums;
+}
+.rm-bar {
+  margin-top: 10px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.rm-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+  transition: width var(--d-slow) var(--ease);
+}
+
+/* ---- Surface 4 · export-run busy spinner ---- */
+@keyframes rm-spin { to { transform: rotate(360deg); } }
+.rm-spin {
+  transform-origin: 50% 50%;
+  animation: rm-spin 0.7s linear infinite;
+}
+.btn[disabled] { opacity: 0.4; cursor: default; pointer-events: none; }

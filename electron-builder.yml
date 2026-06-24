@@ -1,0 +1,87 @@
+appId: com.flowstate.app
+productName: Flowstate
+copyright: Copyright © 2026 Ashton Rey Kusuma
+directories:
+  output: dist
+  buildResources: build
+files:
+  - out/**
+  - package.json
+  - "!node_modules/**/*"
+  - "node_modules/better-sqlite3/**"
+  - "node_modules/bindings/**"
+  - "node_modules/file-uri-to-path/**"
+asar: true
+asarUnpack:
+  - "node_modules/better-sqlite3/**"
+# Harden the packaged binary (Electron Fuses). Closes off ways a shipped exe can
+# be repurposed as a generic Node runtime or have its app code swapped out:
+#   - runAsNode off            → ELECTRON_RUN_AS_NODE can't turn the exe into node
+#   - nodeOptions / cliInspect → NODE_OPTIONS + --inspect debug injection blocked
+#   - cookieEncryption on      → session cookies encrypted at rest (OS crypto)
+#   - asar integrity + onlyLoadAppFromAsar → app code must match the signed asar
+#     hash and can only load from the asar (no on-disk tampering / sideload).
+electronFuses:
+  runAsNode: false
+  enableCookieEncryption: true
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+win:
+  icon: build/icon.ico
+  target:
+    # Website distribution (self-hosted): one-click installer + portable single-file.
+    # These use the `generic` auto-update feed below.
+    - target: nsis
+      arch:
+        - x64
+    - target: portable
+      arch:
+        - x64
+    # Microsoft Store distribution: MSIX. The Store re-signs the package, so NO
+    # paid code-signing certificate is needed and SmartScreen never warns. The
+    # Store also handles updates (the auto-updater no-ops for this build).
+    # OPT-IN: uncomment once the real Partner Center identity is filled under
+    # `appx:` below — the placeholder identity is invalid and would fail the build,
+    # so it's left out of the default target set (nsis + portable build cleanly).
+    # - target: appx
+    #   arch:
+    #     - x64
+portable:
+  artifactName: Flowstate.${ext}
+nsis:
+  artifactName: Flowstate-Setup-${version}.${ext}
+  oneClick: true
+  perMachine: false
+  allowToChangeInstallationDirectory: false
+  createDesktopShortcut: always
+  createStartMenuShortcut: true
+  shortcutName: Flowstate
+  runAfterFinish: true
+  deleteAppDataOnUninstall: false
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+extraMetadata:
+  main: out/main/index.js
+# Microsoft Store (MSIX) identity. Reserve the app name in Partner Center
+# (partner.microsoft.com) → Product Identity gives you these exact values.
+# Until filled, the `appx` target still BUILDS for local sideload testing, but
+# Store submission requires the real identity to match your reservation.
+appx:
+  identityName: REPLACE_WITH_STORE_IDENTITY_NAME      # e.g. 12345Publisher.Flowstate
+  publisher: REPLACE_WITH_STORE_PUBLISHER             # e.g. CN=ABCD1234-...
+  publisherDisplayName: REPLACE_WITH_PUBLISHER_NAME   # e.g. Ashton Rey Kusuma
+  applicationId: Flowstate
+  backgroundColor: "#0e0d0c"
+# Auto-update feed for the WEBSITE build (nsis/portable). `generic` = any static
+# host you control: upload the installer + `latest.yml` + `.blockmap` to this URL
+# on each release. No GitHub needed. The in-app updater (auto-update.ts) reads
+# this; if the URL is unreachable it degrades silently. The Store (appx) build
+# updates via the Store and ignores this feed.
+# Release: bump `version` in package.json, then
+#   npm run build && npx electron-builder --publish always
+# (uploads to the host if you configure credentials, or build then upload by hand).
+publish:
+  - provider: generic
+    url: https://REPLACE_WITH_YOUR_DOMAIN/updates/

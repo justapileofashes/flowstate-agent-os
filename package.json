@@ -1,0 +1,80 @@
+{
+  "name": "flowstate",
+  "version": "1.0.0",
+  "description": "Local AI agent dashboard powered by Ollama.",
+  "main": "out/main/index.js",
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "rebuild:electron": "node scripts/sqlite-bindings.mjs",
+    "rebuild:node": "node scripts/sqlite-bindings.mjs",
+    "predev": "npm run rebuild:electron",
+    "dev": "electron-vite dev",
+    "prebuild": "npm run rebuild:electron",
+    "build": "electron-vite build",
+    "prestart": "npm run rebuild:electron",
+    "start": "electron-vite preview",
+    "typecheck": "tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.web.json --noEmit",
+    "pretest": "npm run rebuild:node",
+    "test": "vitest run",
+    "pretest:watch": "npm run rebuild:node",
+    "test:watch": "vitest",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "prepackage": "npm run rebuild:electron && npm run build",
+    "package": "electron-builder",
+    "package:dir": "electron-builder --dir",
+    "postinstall": "node scripts/sqlite-bindings.mjs"
+  },
+  "license": "MIT",
+  "private": true,
+  "author": {
+    "name": "Ashton Rey Kusuma",
+    "email": "ashtonreykusuma11@gmail.com"
+  },
+  "dependencies": {
+    "@fontsource/inter": "^5.2.8",
+    "@fontsource/jetbrains-mono": "^5.2.8",
+    "better-sqlite3": "^12.10.0",
+    "electron-updater": "^6.8.9",
+    "framer-motion": "^11.18.2",
+    "headroom-ai": "^0.22.4",
+    "highlight.js": "^11.11.1",
+    "jose": "^6.2.3",
+    "ollama": "^0.5.18",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-markdown": "^9.1.0",
+    "react-router-dom": "^6.30.3",
+    "rehype-highlight": "^7.0.2",
+    "remark-gfm": "^4.0.1",
+    "shell-quote": "^1.8.3",
+    "simple-icons": "^16.22.0",
+    "zod": "^3.25.76"
+  },
+  "overrides": {
+    "js-yaml": "4.2.0"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^4.0.4",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^20.19.39",
+    "@types/react": "^18.3.28",
+    "@types/react-dom": "^18.3.7",
+    "@types/shell-quote": "^1.7.5",
+    "@vitejs/plugin-react": "^4.7.0",
+    "autoprefixer": "^10.5.0",
+    "electron": "^41.7.2",
+    "electron-builder": "^26.8.1",
+    "electron-vite": "^5.0.0",
+    "eslint": "^9.39.4",
+    "postcss": "^8.5.14",
+    "prettier": "^3.8.3",
+    "tailwindcss": "^3.4.19",
+    "typescript": "^5.9.3",
+    "vite": "^8.0.16",
+    "vitest": "^4.1.8"
+  }
+}

@@ -1,0 +1,116 @@
+/* =========================================================
+   license.css — subscription gating surfaces.
+   Tokens only. Monochrome. No traffic-light colors.
+   A lock is a conversion moment, kept quiet.
+   ========================================================= */
+
+/* ---- Surface B · lock chip on gated controls ---- */
+.lock-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-faint);
+  flex: 0 0 auto;
+  transition: color var(--d-fast) var(--ease);
+}
+.nav-row .lock-chip { margin-left: auto; }
+.nav-row:hover .lock-chip { color: var(--ink-muted); }
+.lock-dim { opacity: 0.66; transition: opacity var(--d-fast) var(--ease); }
+.lock-dim:hover { opacity: 0.9; }
+
+/* ---- Surface A · upsell modal ---- */
+.modal.upsell { width: min(440px, calc(100% - 56px)); }
+.upsell-head { display: flex; flex-direction: column; gap: 14px; padding: 20px 22px 0; }
+.upsell-lock {
+  width: 38px; height: 38px; border-radius: 11px;
+  background: var(--surface-2); border: 1px solid var(--border);
+  display: grid; place-items: center; color: var(--ink-strong);
+}
+.upsell-title {
+  font-size: 21px; font-weight: 400; color: var(--ink-strong);
+  letter-spacing: -0.015em; line-height: 1.1;
+}
+.upsell-desc { color: var(--ink-muted); font-size: 13.5px; line-height: 1.5; margin-top: 5px; max-width: 42ch; }
+.upsell-note { color: var(--ink-faint); font-size: 11.5px; }
+
+.upsell-perks {
+  list-style: none; margin: 18px 0 0; padding: 0 22px;
+  display: flex; flex-direction: column; gap: 11px;
+}
+.upsell-perks li { display: flex; gap: 10px; align-items: flex-start; color: var(--ink); font-size: 13.5px; line-height: 1.4; }
+.upsell-perks li svg { flex: 0 0 16px; margin-top: 1px; color: var(--ink-strong); }
+
+.upsell-foot { display: flex; align-items: center; gap: 12px; padding: 20px 22px 22px; }
+
+/* ---- Surface E · plan comparison ---- */
+.modal.plans { width: min(760px, calc(100% - 48px)); }
+.modal.plans .modal-body { padding: 18px; }
+.plans-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.plan-col {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  padding: 18px 16px 16px;
+  background: var(--surface);
+  display: flex; flex-direction: column; gap: 3px;
+}
+.plan-col.featured {
+  border-color: var(--border-strong);
+  background: linear-gradient(180deg, rgba(232,227,213,0.035), transparent 55%), var(--surface);
+}
+.plan-col.current { border-color: var(--border-strong); }
+.plan-badge { position: absolute; top: 0; right: 14px; transform: translateY(-50%); }
+.plan-name { font-size: 14px; color: var(--ink-strong); font-weight: 500; }
+.plan-price {
+  font-size: 30px; font-weight: 300; color: var(--ink-strong);
+  letter-spacing: -0.02em; line-height: 1.1; margin-top: 2px;
+}
+.plan-price small { font-size: 12.5px; color: var(--ink-faint); font-weight: 400; letter-spacing: 0; }
+.plan-tag { color: var(--ink-muted); font-size: 12px; min-height: 34px; line-height: 1.35; }
+.plan-benefits { list-style: none; margin: 10px 0 14px; padding: 0; display: flex; flex-direction: column; gap: 9px; flex: 1; }
+.plan-benefits li { display: flex; gap: 8px; font-size: 12.5px; color: var(--ink-muted); line-height: 1.4; }
+.plan-benefits li svg { flex: 0 0 14px; margin-top: 2px; color: var(--ink-faint); }
+.plan-col.featured .plan-benefits li svg { color: var(--ink-muted); }
+
+/* ---- Surface D · sidebar upgrade button ---- */
+.sidebar-footer.has-upgrade { flex-direction: column; align-items: stretch; gap: 10px; }
+.upgrade-btn {
+  width: 100%;
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  font-family: var(--font-ui);
+  text-align: left;
+  transition: background var(--d-fast) var(--ease), border-color var(--d-fast) var(--ease);
+}
+.upgrade-btn:hover { background: var(--surface-3); }
+.upgrade-btn:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+.upgrade-btn .spark { color: var(--accent); display: inline-flex; flex: 0 0 16px; }
+.upgrade-btn-main { color: var(--ink-strong); font-size: 13px; font-weight: 500; }
+.upgrade-btn-sub {
+  color: var(--ink-faint); font-size: 11px; margin-left: auto;
+  font-family: var(--font-mono); letter-spacing: 0.02em;
+}
+.upgrade-maxed { display: flex; align-items: center; gap: 10px; }
+
+/* ---- Surface C · soft-cap nudge ---- */
+.softcap {
+  display: flex; align-items: flex-start; gap: 8px;
+  margin-top: 10px; padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  color: var(--ink-muted);
+  font-size: 12.5px; line-height: 1.45;
+  animation: bubble-in var(--d-base) var(--ease);
+}
+.softcap svg { flex: 0 0 13px; margin-top: 2px; color: var(--ink-faint); }
+.softcap a {
+  color: var(--ink-strong); cursor: pointer; text-decoration: none;
+  border-bottom: 1px solid var(--border-strong);
+  transition: color var(--d-fast) var(--ease);
+}
+.softcap a:hover { color: var(--accent); border-color: var(--accent); }
