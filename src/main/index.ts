@@ -48,6 +48,7 @@ import {
 } from './services/agent-model-matcher';
 import { SEED_AGENTS } from './seed-agents';
 import { registerIpcHandlers } from './ipc/register';
+import { getConnectedClis } from './ipc/handlers/clis';
 import { decideNotification } from './services/notify';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
@@ -413,6 +414,7 @@ app.whenReady().then(async () => {
         .split(',')
         .map((s) => s.trim())
         .filter((s) => s.length > 0),
+    getConnectedClis: () => getConnectedClis(),
   });
 
   // Orchestrator routing — pick a small/fast model for classification.

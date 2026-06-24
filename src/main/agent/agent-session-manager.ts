@@ -16,6 +16,7 @@ import type { AuditLogger } from '@main/services/audit-logger';
 import type { SnapshotService } from '@main/services/snapshot-service';
 import type { SkillRegistry } from '@main/services/skill-registry';
 import type { HookRunner } from './hook-runner';
+import { buildCliContext, type DetectedCli } from '@main/services/cli-catalog';
 
 export interface AgentSessionManagerOpts {
   provider: LLMProvider;
@@ -36,6 +37,9 @@ export interface AgentSessionManagerOpts {
   getWorkspaceOverride?: (chatId: string) => string | null;
   /** Ordered fallback model ids to try if the primary fails before output. */
   getFallbackModels?: () => string[];
+  /** Installed CLIs the user connected — advertised to shell-enabled agents so
+   *  they know which command-line tools they can invoke via run_shell. */
+  getConnectedClis?: () => DetectedCli[];
 }
 
 interface ActiveEntry {
@@ -84,6 +88,12 @@ export class AgentSessionManager {
             .map((s) => `- **${s.name}** — ${s.description}`)
             .join('\n')}`
         : '';
+    // Connected CLIs — only meaningful to agents that can shell out, since they
+    // invoke these via run_shell.
+    const cliBlock = agent.toolPerms.shell_enabled
+      ? buildCliContext(this.opts.getConnectedClis?.() ?? [])
+      : '';
+
     const override = this.opts.getModelOverride?.(chatId)?.trim();
     const wsOverride = this.opts.getWorkspaceOverride?.(chatId)?.trim();
     const workspacePath = wsOverride && wsOverride.length > 0 ? wsOverride : agent.workspacePath;
@@ -92,7 +102,12 @@ export class AgentSessionManager {
       workspacePath,
       model: override && override.length > 0 ? override : agent.model,
       systemPrompt:
-        agent.systemPrompt + workflowFraming + projectRulesBlock + skillsBlock + dateContext,
+        agent.systemPrompt +
+        workflowFraming +
+        projectRulesBlock +
+        skillsBlock +
+        cliBlock +
+        dateContext,
     };
     const constitution = await loadConstitution(workspacePath);
     const dispatcher = new ToolDispatcher({

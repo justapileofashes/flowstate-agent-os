@@ -119,6 +119,9 @@ export const CHANNELS = {
   PROMPT_HISTORY_GET: 'prompt-history:get',
   PROMPT_HISTORY_PUSH: 'prompt-history:push',
   USAGE_SUMMARY: 'usage:summary',
+  CLIS_DETECT: 'clis:detect',
+  CLIS_GET: 'clis:get',
+  CLIS_CONNECT: 'clis:connect',
   BACKUP_EXPORT: 'backup:export',
   BACKUP_IMPORT: 'backup:import',
   FLOWCLAW_RUN_TASK: 'flowclaw:run-task',
@@ -1041,6 +1044,9 @@ export const schemas = {
   stocksWatchlistSetRequest: z.object({
     symbols: z.array(z.string().trim().min(1).max(20)).max(100),
   }),
+  clisConnectRequest: z.object({
+    ids: z.array(z.string().trim().min(1).max(64)).max(200),
+  }),
 };
 
 export type StocksRange = z.infer<typeof schemas.stocksRange>;
@@ -1096,6 +1102,26 @@ export interface StockAnalysisResponse {
 }
 export interface StockWatchlistResponse {
   symbols: string[];
+}
+
+export interface DetectedCliDto {
+  id: string;
+  name: string;
+  command: string;
+  category: string;
+  description: string;
+  installed: boolean;
+  version: string | null;
+  path: string | null;
+}
+
+export interface ClisDetectResponse {
+  clis: DetectedCliDto[];
+}
+
+export interface ClisGetResponse {
+  connected: string[];
+  onboardingSeen: boolean;
 }
 
 export interface SnapshotDto {

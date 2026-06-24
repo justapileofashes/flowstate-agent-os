@@ -28,6 +28,7 @@ import { registerAgentPackHandlers } from './handlers/agent-pack';
 import { registerDevToolsHandlers } from './handlers/dev-tools';
 import { registerBackupHandlers } from './handlers/backup';
 import { registerObservabilityHandlers } from './handlers/observability';
+import { registerClisHandlers } from './handlers/clis';
 import { registerStocksHandlers } from './handlers/stocks';
 import { registerPluginHandlers } from './handlers/plugins';
 import { registerTerminalHandlers } from './handlers/terminal';
@@ -99,6 +100,7 @@ export function registerIpcHandlers(deps: {
   registerAgentPackHandlers({ repo: deps.repo, workspacesDir: deps.workspacesDir });
   registerObservabilityHandlers({ repo: deps.repo, auditRepo: deps.auditRepo });
   registerUsageHandlers();
+  registerClisHandlers({ settings: deps.settings });
   registerStocksHandlers({ settings: deps.settings });
   registerBackupHandlers({ repo: deps.repo, settings: deps.settings, workspacesDir: deps.workspacesDir });
   registerDevToolsHandlers({

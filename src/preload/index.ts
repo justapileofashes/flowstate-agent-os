@@ -32,6 +32,8 @@ import type {
   AgentsExportPackResponse,
   AgentsImportPackResponse,
   SystemStatsGetResponse,
+  ClisDetectResponse,
+  ClisGetResponse,
   ChatExportRunResponse,
   SnippetsListResponse,
   SnippetsSaveResponse,
@@ -452,6 +454,12 @@ const api = {
   system: {
     stats: (): Promise<SystemStatsGetResponse> =>
       ipcRenderer.invoke(CHANNELS.SYSTEM_STATS_GET, {}),
+  },
+  clis: {
+    detect: (): Promise<ClisDetectResponse> => ipcRenderer.invoke(CHANNELS.CLIS_DETECT, {}),
+    get: (): Promise<ClisGetResponse> => ipcRenderer.invoke(CHANNELS.CLIS_GET, {}),
+    connect: (ids: string[]): Promise<{ ok: true }> =>
+      ipcRenderer.invoke(CHANNELS.CLIS_CONNECT, { ids }),
   },
   backup: {
     export: (): Promise<BackupExportResponse> => ipcRenderer.invoke(CHANNELS.BACKUP_EXPORT, {}),

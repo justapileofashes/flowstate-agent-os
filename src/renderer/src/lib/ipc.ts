@@ -237,6 +237,11 @@ interface FlowstateApi {
   system: {
     stats: () => Promise<SystemStatsGetResponse>;
   };
+  clis: {
+    detect: () => Promise<import('@shared/ipc-channels').ClisDetectResponse>;
+    get: () => Promise<import('@shared/ipc-channels').ClisGetResponse>;
+    connect: (ids: string[]) => Promise<{ ok: true }>;
+  };
   backup: {
     export: () => Promise<import('@shared/ipc-channels').BackupExportResponse>;
     import: () => Promise<import('@shared/ipc-channels').BackupImportResponse>;
