@@ -41,14 +41,20 @@ export function TerminalPanel({
   id,
   cwd,
   onClose,
+  initialCommand,
 }: {
   id: string;
   cwd: string;
   onClose: () => void;
+  /** If set, this command is run automatically once the session starts (used to
+   *  launch a connected coding CLI). */
+  initialCommand?: string;
 }): JSX.Element {
   const [lines, setLines] = useState<Line[]>([
     { kind: 'sys', text: `Flowstate shell · ${cwd} · piped session` },
-    { kind: 'sys', text: 'Runs locally on your machine. Type a command below.' },
+    initialCommand
+      ? { kind: 'sys', text: `Launching ${initialCommand}…` }
+      : { kind: 'sys', text: 'Runs locally on your machine. Type a command below.' },
   ]);
   const [pending, setPending] = useState(''); // in-progress (no trailing newline yet)
   const [input, setInput] = useState('');
@@ -82,6 +88,14 @@ export function TerminalPanel({
       push([{ kind: 'sys', text: `session ended${p.code != null ? ` (code ${p.code})` : ''}` }]);
     });
     void ipc.terminal.start(id, cwd);
+    if (initialCommand && initialCommand.trim()) {
+      // Give the shell a beat to spawn, then run the launch command.
+      const cmd = initialCommand;
+      setTimeout(() => {
+        push([{ kind: 'cmd', text: cmd }]);
+        void ipc.terminal.input(id, cmd + '\r\n');
+      }, 250);
+    }
     return () => {
       offData();
       offExit();

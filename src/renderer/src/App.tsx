@@ -8,6 +8,7 @@ import { Dashboard } from './screens/Dashboard';
 import { Models } from './screens/Models';
 import { Brain } from './screens/Brain';
 import { Connectors } from './screens/Connectors';
+import { CodingClis } from './screens/CodingClis';
 import { Plugins } from './screens/Plugins';
 import { Routines } from './screens/Routines';
 import { Flowclaw } from './screens/Flowclaw';
@@ -41,6 +42,7 @@ type View =
   | { kind: 'models' }
   | { kind: 'brain' }
   | { kind: 'connectors' }
+  | { kind: 'coding-clis' }
   | { kind: 'plugins' }
   | { kind: 'routines' }
   | { kind: 'flowclaw' }
@@ -275,6 +277,8 @@ export function App(): JSX.Element {
             ? 'Brain'
             : view.kind === 'connectors'
               ? 'Connectors'
+              : view.kind === 'coding-clis'
+                ? 'Coding CLIs'
               : view.kind === 'plugins'
                 ? 'Plugins'
                 : view.kind === 'routines'
@@ -351,6 +355,12 @@ export function App(): JSX.Element {
               icon={<svg viewBox="0 0 16 16" fill="none" className="icon"><rect x="2" y="6" width="4" height="4" rx="1" stroke="currentColor"/><rect x="10" y="6" width="4" height="4" rx="1" stroke="currentColor"/><line x1="6" y1="8" x2="10" y2="8" stroke="currentColor"/></svg>}
             />
           )}
+          <NavRow
+            label="Coding CLIs"
+            active={view.kind === 'coding-clis'}
+            onClick={() => setView({ kind: 'coding-clis' })}
+            icon={<svg viewBox="0 0 16 16" fill="none" className="icon"><rect x="2" y="3" width="12" height="10" rx="1.5" stroke="currentColor"/><path d="M4.5 6.5l2 1.5-2 1.5M8 9.5h3.5" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+          />
           {prefs.hiddenNav.includes('plugins') ? null : (
             <NavRow
               label="Plugins"
@@ -483,6 +493,8 @@ export function App(): JSX.Element {
               <Brain />
             ) : view.kind === 'connectors' ? (
               <Connectors />
+            ) : view.kind === 'coding-clis' ? (
+              <CodingClis />
             ) : view.kind === 'plugins' ? (
               <Plugins />
             ) : view.kind === 'routines' ? (

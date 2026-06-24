@@ -3,29 +3,7 @@ import { ipc } from '../lib/ipc';
 import { ShortcutsList } from '../chat/ShortcutsModal';
 import { McpServersCard } from './McpServersCard';
 import { DevToolsSettings } from './DevToolsSettings';
-import { ClisPicker } from '../chat/ClisOnboardingModal';
 import { BrandLogo } from '../lib/brand-logos';
-
-function ClisSection(): JSX.Element {
-  const [savedAt, setSavedAt] = useState<number>(0);
-  return (
-    <section className="settings-section">
-      <div className="head">
-        <h3>Connected CLIs</h3>
-        <span className="muted text-xs">
-          Installed command-line tools your agents can use via the shell tool.
-        </span>
-      </div>
-      {/* key forces a fresh re-scan each time the user saves */}
-      <ClisPicker key={savedAt} onDone={() => setSavedAt(Date.now())} />
-      {savedAt > 0 ? (
-        <div className="muted text-xs" style={{ marginTop: 8, color: 'var(--good)' }}>
-          ✓ Saved — agents now see your selected CLIs.
-        </div>
-      ) : null}
-    </section>
-  );
-}
 
 function NotificationsSection(): JSX.Element {
   const [enabled, setEnabled] = useState(true);
@@ -392,8 +370,6 @@ export function Settings(): JSX.Element {
         <div className="head"><h3>MCP servers</h3></div>
         <McpServersCard />
       </section>
-
-      <ClisSection />
 
       <NotificationsSection />
 

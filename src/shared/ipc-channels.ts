@@ -1113,6 +1113,7 @@ export interface DetectedCliDto {
   installed: boolean;
   version: string | null;
   path: string | null;
+  docsUrl: string | null;
 }
 
 export interface ClisDetectResponse {
@@ -1122,6 +1123,8 @@ export interface ClisDetectResponse {
 export interface ClisGetResponse {
   connected: string[];
   onboardingSeen: boolean;
+  /** User home dir — default working directory when launching a coding CLI. */
+  homeDir: string;
 }
 
 export interface SnapshotDto {

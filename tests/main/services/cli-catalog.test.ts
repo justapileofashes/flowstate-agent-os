@@ -33,9 +33,9 @@ describe('KNOWN_CLIS', () => {
     expect(KNOWN_CLIS.every((c) => c.command.length > 0)).toBe(true);
   });
 
-  it('includes the staple dev CLIs', () => {
+  it('includes the staple coding CLIs', () => {
     const ids = new Set(KNOWN_CLIS.map((c) => c.id));
-    for (const id of ['git', 'gh', 'docker', 'node', 'python', 'ollama']) {
+    for (const id of ['claude', 'codex', 'gemini', 'aider']) {
       expect(ids.has(id)).toBe(true);
     }
   });
@@ -44,23 +44,23 @@ describe('KNOWN_CLIS', () => {
 describe('buildCliReport', () => {
   it('merges probe results with the catalog, preserving catalog order', () => {
     const results: CliProbeResult[] = [
-      { id: 'git', installed: true, version: '2.45.1', path: '/usr/bin/git' },
-      { id: 'docker', installed: false, version: null, path: null },
+      { id: 'claude', installed: true, version: '1.2.3', path: '/usr/bin/claude' },
+      { id: 'aider', installed: false, version: null, path: null },
     ];
     const report = buildCliReport(results);
-    const git = report.find((c) => c.id === 'git')!;
-    expect(git.installed).toBe(true);
-    expect(git.version).toBe('2.45.1');
-    expect(git.name.length).toBeGreaterThan(0);
-    expect(git.category.length).toBeGreaterThan(0);
+    const claude = report.find((c) => c.id === 'claude')!;
+    expect(claude.installed).toBe(true);
+    expect(claude.version).toBe('1.2.3');
+    expect(claude.name.length).toBeGreaterThan(0);
+    expect(claude.category.length).toBeGreaterThan(0);
     // a catalog entry with no probe result defaults to not-installed
-    const node = report.find((c) => c.id === 'node')!;
-    expect(node.installed).toBe(false);
+    const codex = report.find((c) => c.id === 'codex')!;
+    expect(codex.installed).toBe(false);
     // order follows the catalog
-    const gitIdx = report.findIndex((c) => c.id === 'git');
-    const dockerIdx = report.findIndex((c) => c.id === 'docker');
-    expect(gitIdx).toBe(KNOWN_CLIS.findIndex((c) => c.id === 'git'));
-    expect(dockerIdx).toBe(KNOWN_CLIS.findIndex((c) => c.id === 'docker'));
+    const claudeIdx = report.findIndex((c) => c.id === 'claude');
+    const aiderIdx = report.findIndex((c) => c.id === 'aider');
+    expect(claudeIdx).toBe(KNOWN_CLIS.findIndex((c) => c.id === 'claude'));
+    expect(aiderIdx).toBe(KNOWN_CLIS.findIndex((c) => c.id === 'aider'));
   });
 
   it('ignores probe results for unknown ids', () => {
@@ -77,11 +77,12 @@ describe('buildCliContext', () => {
     id,
     name,
     command,
-    category: 'vcs',
+    category: 'agentic',
     description: 'desc',
     installed: true,
     version: '1.0.0',
     path: '/x',
+    docsUrl: null,
   });
 
   it('returns an empty string when nothing is connected', () => {
@@ -89,10 +90,10 @@ describe('buildCliContext', () => {
   });
 
   it('lists connected CLIs with their command and mentions run_shell', () => {
-    const ctx = buildCliContext([mk('gh', 'GitHub CLI', 'gh'), mk('docker', 'Docker', 'docker')]);
+    const ctx = buildCliContext([mk('claude', 'Claude Code', 'claude'), mk('aider', 'Aider', 'aider')]);
     expect(ctx).toContain('run_shell');
-    expect(ctx).toContain('gh');
-    expect(ctx).toContain('GitHub CLI');
-    expect(ctx).toContain('docker');
+    expect(ctx).toContain('claude');
+    expect(ctx).toContain('Claude Code');
+    expect(ctx).toContain('aider');
   });
 });

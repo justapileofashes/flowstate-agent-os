@@ -7,7 +7,7 @@ describe('detectInstalledClis', () => {
     const probed: string[] = [];
     const fakeProbe = async (def: { id: string }): Promise<CliProbeResult> => {
       probed.push(def.id);
-      const installed = def.id === 'git' || def.id === 'node';
+      const installed = def.id === 'claude' || def.id === 'aider';
       return {
         id: def.id,
         installed,
@@ -18,18 +18,18 @@ describe('detectInstalledClis', () => {
     const report = await detectInstalledClis(KNOWN_CLIS, fakeProbe);
     expect(probed.length).toBe(KNOWN_CLIS.length);
     expect(report.length).toBe(KNOWN_CLIS.length);
-    expect(report.find((c) => c.id === 'git')!.installed).toBe(true);
-    expect(report.find((c) => c.id === 'git')!.version).toBe('1.2.3');
-    expect(report.find((c) => c.id === 'docker')!.installed).toBe(false);
+    expect(report.find((c) => c.id === 'claude')!.installed).toBe(true);
+    expect(report.find((c) => c.id === 'claude')!.version).toBe('1.2.3');
+    expect(report.find((c) => c.id === 'codex')!.installed).toBe(false);
   });
 
   it('survives a probe that throws (treats it as not installed)', async () => {
     const flakyProbe = async (def: { id: string }): Promise<CliProbeResult> => {
-      if (def.id === 'git') throw new Error('boom');
+      if (def.id === 'claude') throw new Error('boom');
       return { id: def.id, installed: false, version: null, path: null };
     };
     const report = await detectInstalledClis(KNOWN_CLIS, flakyProbe);
     expect(report.length).toBe(KNOWN_CLIS.length);
-    expect(report.find((c) => c.id === 'git')!.installed).toBe(false);
+    expect(report.find((c) => c.id === 'claude')!.installed).toBe(false);
   });
 });

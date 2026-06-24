@@ -3,6 +3,7 @@
 // reused for the agent system-prompt injection (getConnectedClis) — that runs
 // on every chat start and must not re-scan.
 
+import { homedir } from 'node:os';
 import { ipcMain } from 'electron';
 import { CHANNELS, schemas } from '@shared/ipc-channels';
 import type { SettingsService } from '@main/services/settings-service';
@@ -56,6 +57,7 @@ export function registerClisHandlers(deps: { settings: SettingsService }): void 
   ipcMain.handle(CHANNELS.CLIS_GET, () => ({
     connected: readConnectedIds(deps.settings),
     onboardingSeen: deps.settings.get(SEEN_KEY) === 'true',
+    homeDir: homedir(),
   }));
 
   ipcMain.handle(CHANNELS.CLIS_CONNECT, (_e, raw) => {

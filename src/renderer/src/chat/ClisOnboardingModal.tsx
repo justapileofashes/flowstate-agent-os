@@ -90,8 +90,8 @@ export function ClisPicker({
     return (
       <div>
         <p className="muted text-sm" style={{ marginBottom: 16 }}>
-          No known CLIs found on your PATH. Install tools like Git, GitHub CLI, Docker, or the AWS
-          CLI and re-scan from Settings — they’ll become available to your agents.
+          No coding CLIs found on your PATH. Install one (e.g. Claude Code, Aider, or Gemini CLI),
+          then re-scan from the Coding CLIs screen — they’ll become available to your agents.
         </p>
         <div className="row" style={{ justifyContent: 'flex-end' }}>
           <button type="button" className="btn btn-primary" onClick={() => onDone([])} disabled={busy}>
@@ -197,12 +197,12 @@ export function ClisOnboardingModal(): JSX.Element | null {
           >
             <div className="eyebrow">Connect your tools</div>
             <h2 className="section-title" style={{ fontSize: 22, marginBottom: 6 }}>
-              Connect installed CLIs
+              Connect your coding CLIs
             </h2>
             <p className="muted text-sm" style={{ marginBottom: 8 }}>
-              Flowstate found these command-line tools on your machine. Connect the ones you want and
-              your agents will know they can use them (via the shell tool). You can change this any
-              time in Settings.
+              Flowstate found these AI coding CLIs installed on your machine. Connect the ones you
+              use — your agents will know they’re available, and you can launch any of them from the
+              Coding CLIs screen. You can change this any time.
             </p>
             <ClisPicker onDone={() => setOpen(false)} onCancel={() => void skip()} />
           </motion.div>
