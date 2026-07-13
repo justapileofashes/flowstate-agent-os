@@ -429,6 +429,34 @@ interface FlowstateApi {
       symbols: string[],
     ) => Promise<import('@shared/ipc-channels').StockWatchlistResponse>;
   };
+  trading: {
+    status: () => Promise<import('@shared/ipc-channels').TradingStatusResponse>;
+    connect: (
+      keyId: string,
+      secret: string,
+      paper: boolean,
+    ) => Promise<{ ok: boolean; error?: string; equity?: number }>;
+    disconnect: () => Promise<{ ok: boolean }>;
+    setLiveAck: (ack: boolean) => Promise<{ ok: boolean }>;
+    account: () => Promise<import('@shared/ipc-channels').TradingAccountResponse>;
+    setGuardrails: (
+      patch: Partial<import('@shared/ipc-channels').TradingGuardrailsDto>,
+    ) => Promise<{ guardrails: import('@shared/ipc-channels').TradingGuardrailsDto }>;
+    setAutopilot: (enabled: boolean) => Promise<{ ok: boolean; error?: string }>;
+    runCycle: () => Promise<{
+      ok: boolean;
+      error?: string;
+      report?: import('@shared/ipc-channels').TradingCycleReportDto;
+    }>;
+    trades: (limit?: number) => Promise<{
+      trades: import('@shared/ipc-channels').TradingTradeDto[];
+      lessons: string[];
+    }>;
+    strategies: () => Promise<{
+      strategies: import('@shared/ipc-channels').TradingStrategyDto[];
+    }>;
+    setStrategyStatus: (id: string, status: 'active' | 'retired') => Promise<{ ok: boolean }>;
+  };
 }
 
 declare global {

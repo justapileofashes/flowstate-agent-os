@@ -8,6 +8,7 @@
 // Free tier: chrome renders behind a locked overlay; no IPC is called.
 import { useEffect, useRef, useState, type JSX } from 'react';
 import { ipc } from '../lib/ipc';
+import { TradingPanel } from './TradingPanel';
 import type {
   StockAnalysisResponse,
   StockQuoteResponse,
@@ -624,6 +625,7 @@ function StkDetailWithSide({
 // Stocks — top-level screen
 // =========================================================
 export function Stocks(): JSX.Element {
+  const [view, setView] = useState<'analyze' | 'autopilot'>('analyze');
   const [symbols, setSymbols] = useState<string[]>([]);
   const [quotes, setQuotes] = useState<Quotes>({});
   const [selected, setSelected] = useState<string | null>(null);
@@ -692,6 +694,27 @@ export function Stocks(): JSX.Element {
   return (
     <div className="stocks-page">
       <Disclaimer />
+      <div className="row gap-1" style={{ padding: '8px 16px 0' }}>
+        <button
+          type="button"
+          className={view === 'analyze' ? 'btn btn-sm btn-primary' : 'btn btn-sm btn-ghost'}
+          onClick={() => setView('analyze')}
+        >
+          Analyze
+        </button>
+        <button
+          type="button"
+          className={view === 'autopilot' ? 'btn btn-sm btn-primary' : 'btn btn-sm btn-ghost'}
+          onClick={() => setView('autopilot')}
+        >
+          Autopilot
+        </button>
+      </div>
+      {view === 'autopilot' ? (
+        <div style={{ flex: 1, minHeight: 0 }}>
+          <TradingPanel />
+        </div>
+      ) : (
       <div className="stk-body">
         <StkWatchlist
           symbols={symbols}
@@ -724,6 +747,7 @@ export function Stocks(): JSX.Element {
           </>
         )}
       </div>
+      )}
     </div>
   );
 }

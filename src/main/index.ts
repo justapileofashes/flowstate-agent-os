@@ -19,6 +19,7 @@ import { fileURLToPath } from 'node:url';
 import { openDatabase, setHelperWorkspace } from './db/database';
 import { databasePath, defaultWorkspacesDir } from './paths';
 import { SettingsService } from './services/settings-service';
+import { initTradingService } from './services/trading-service';
 import { SecretStore, electronSafeStorageBackend } from './services/secret-store';
 import { initAutoUpdate } from './services/auto-update';
 import { OllamaClient } from './services/ollama-client';
@@ -210,6 +211,10 @@ app.whenReady().then(async () => {
   // keychain so the SQLite file never holds them in plaintext.
   const secretStore = new SecretStore(electronSafeStorageBackend());
   const settings = new SettingsService(db, secretStore);
+
+  // Autonomous trading facade (Alpaca + journal + guardrails). Singleton so
+  // the agent tool dispatcher and the IPC handlers share one guarded pipeline.
+  const trading = initTradingService(db, settings);
 
   if (settings.get('workspaces_dir') === null) {
     settings.set('workspaces_dir', defaultWorkspacesDir());
@@ -465,6 +470,7 @@ app.whenReady().then(async () => {
 
   registerIpcHandlers({
     settings,
+    trading,
     ollama: ollamaClient,
     repo,
     manager,

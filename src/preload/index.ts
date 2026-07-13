@@ -643,6 +643,24 @@ const api = {
     setWatchlist: (symbols: string[]) =>
       ipcRenderer.invoke(CHANNELS.STOCKS_WATCHLIST_SET, { symbols }),
   },
+  trading: {
+    status: () => ipcRenderer.invoke(CHANNELS.TRADING_STATUS, {}),
+    connect: (keyId: string, secret: string, paper: boolean) =>
+      ipcRenderer.invoke(CHANNELS.TRADING_CONNECT, { keyId, secret, paper }),
+    disconnect: () => ipcRenderer.invoke(CHANNELS.TRADING_DISCONNECT, {}),
+    setLiveAck: (ack: boolean) => ipcRenderer.invoke(CHANNELS.TRADING_LIVE_ACK, { ack }),
+    account: () => ipcRenderer.invoke(CHANNELS.TRADING_ACCOUNT, {}),
+    setGuardrails: (patch: Record<string, number>) =>
+      ipcRenderer.invoke(CHANNELS.TRADING_GUARDRAILS_SET, patch),
+    setAutopilot: (enabled: boolean) =>
+      ipcRenderer.invoke(CHANNELS.TRADING_AUTOPILOT, { enabled }),
+    runCycle: () => ipcRenderer.invoke(CHANNELS.TRADING_RUN_CYCLE, {}),
+    trades: (limit?: number) =>
+      ipcRenderer.invoke(CHANNELS.TRADING_TRADES, limit ? { limit } : {}),
+    strategies: () => ipcRenderer.invoke(CHANNELS.TRADING_STRATEGIES, {}),
+    setStrategyStatus: (id: string, status: 'active' | 'retired') =>
+      ipcRenderer.invoke(CHANNELS.TRADING_STRATEGY_STATUS, { id, status }),
+  },
 };
 
 contextBridge.exposeInMainWorld('flowstate', api);

@@ -22,6 +22,7 @@ import { sceneSchema, buildThreeViewer, buildOpenSCAD } from './model-3d';
 import { app } from 'electron';
 import { join } from 'node:path';
 import { MarketDataService } from '@main/services/market-data';
+import { getTradingService } from '@main/services/trading-service';
 import { rsi, macd, atr, bollinger, sma, ema, swingLevels, trend } from '@shared/indicators';
 import { detectPatterns } from '@shared/patterns';
 import { forecastCone } from '@shared/forecast';
@@ -88,6 +89,30 @@ const argsSchemas = {
   }),
   generate_3d_model: sceneSchema,
   skill: z.object({ name: z.string().min(1).max(80) }),
+  trading_account: z.object({}),
+  place_trade: z.object({
+    symbol: z.string().min(1).max(10),
+    side: z.enum(['buy', 'sell']),
+    entry: z.number().positive(),
+    stoploss: z.number().positive(),
+    takeProfit: z.number().positive(),
+    qty: z.number().positive().max(100_000).optional(),
+    confidence: z.number().min(0).max(1),
+    reason: z.string().min(1).max(2000),
+    strategyId: z.string().max(64).optional(),
+  }),
+  close_trade: z.object({
+    symbol: z.string().min(1).max(10),
+    reason: z.string().min(1).max(2000),
+  }),
+  list_strategies: z.object({}),
+  save_strategy: z.object({
+    name: z.string().min(1).max(120),
+    description: z.string().min(1).max(2000),
+    inspiration: z.string().min(1).max(2000),
+    params: z.record(z.unknown()),
+  }),
+  trade_journal: z.object({ limit: z.number().int().positive().max(200).optional() }),
 } as const;
 
 type ToolName = keyof typeof argsSchemas;
@@ -414,6 +439,110 @@ export class ToolDispatcher {
           } catch (err) {
             return failure(toolCallId, name, err instanceof Error ? err.message : String(err));
           }
+        }
+        case 'trading_account': {
+          const trading = getTradingService();
+          if (!trading) return failure(toolCallId, name, 'Trading not initialized');
+          if (!trading.isConfigured()) {
+            return failure(toolCallId, name, 'Trading not connected — the user must add Alpaca API keys on the Stocks screen');
+          }
+          try {
+            const [status, account] = [trading.status(), await trading.account()];
+            return ok(
+              toolCallId,
+              name,
+              JSON.stringify({
+                mode: status.paper ? 'paper' : 'live',
+                autopilot: status.autopilot,
+                guardrails: status.guardrails,
+                dayStats: trading.dayStats(),
+                account,
+              }),
+            );
+          } catch (err) {
+            return failure(toolCallId, name, err instanceof Error ? err.message : String(err));
+          }
+        }
+        case 'place_trade': {
+          const trading = getTradingService();
+          if (!trading) return failure(toolCallId, name, 'Trading not initialized');
+          if (!trading.isConfigured()) {
+            return failure(toolCallId, name, 'Trading not connected — the user must add Alpaca API keys on the Stocks screen');
+          }
+          const a = parsed.data as z.infer<typeof argsSchemas.place_trade>;
+          try {
+            const { verdict, trade } = await trading.placeTrade(a);
+            return ok(
+              toolCallId,
+              name,
+              JSON.stringify({
+                placed: verdict.allowed,
+                qty: verdict.qty,
+                notional: verdict.notional,
+                blocked: verdict.blocked,
+                notes: verdict.reasons,
+                ...(trade ? { tradeId: trade.id } : {}),
+              }),
+            );
+          } catch (err) {
+            return failure(toolCallId, name, err instanceof Error ? err.message : String(err));
+          }
+        }
+        case 'close_trade': {
+          const trading = getTradingService();
+          if (!trading || !trading.isConfigured()) {
+            return failure(toolCallId, name, 'Trading not connected');
+          }
+          const a = parsed.data as z.infer<typeof argsSchemas.close_trade>;
+          try {
+            const res = await trading.closeBySymbol(a.symbol, a.reason);
+            return res.ok
+              ? ok(toolCallId, name, JSON.stringify(res))
+              : failure(toolCallId, name, res.detail);
+          } catch (err) {
+            return failure(toolCallId, name, err instanceof Error ? err.message : String(err));
+          }
+        }
+        case 'list_strategies': {
+          const trading = getTradingService();
+          if (!trading) return failure(toolCallId, name, 'Trading not initialized');
+          return ok(toolCallId, name, JSON.stringify({ strategies: trading.strategies() }));
+        }
+        case 'save_strategy': {
+          const trading = getTradingService();
+          if (!trading) return failure(toolCallId, name, 'Trading not initialized');
+          const a = parsed.data as z.infer<typeof argsSchemas.save_strategy>;
+          const s = trading.createStrategy(a);
+          return ok(
+            toolCallId,
+            name,
+            JSON.stringify({ ok: true, id: s.id, name: s.name, params: s.params, status: s.status }),
+          );
+        }
+        case 'trade_journal': {
+          const trading = getTradingService();
+          if (!trading) return failure(toolCallId, name, 'Trading not initialized');
+          const a = parsed.data as z.infer<typeof argsSchemas.trade_journal>;
+          const trades = trading.trades(a.limit ?? 25).map((t) => ({
+            symbol: t.symbol,
+            side: t.side,
+            qty: t.qty,
+            entry: t.entryPrice,
+            stoploss: t.stoploss,
+            takeProfit: t.takeProfit,
+            exit: t.exitPrice,
+            status: t.status,
+            outcome: t.outcome,
+            pnl: t.pnl,
+            review: t.review,
+            openedAt: new Date(t.openedAt).toISOString(),
+            rationale: t.rationale.slice(0, 1000),
+          }));
+          return ok(
+            toolCallId,
+            name,
+            JSON.stringify({ trades, lessons: trading.recentLessons(10) }),
+          );
         }
         case 'generate_3d_model': {
           const scene = parsed.data as z.infer<typeof argsSchemas.generate_3d_model>;

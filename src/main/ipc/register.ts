@@ -30,6 +30,8 @@ import { registerBackupHandlers } from './handlers/backup';
 import { registerObservabilityHandlers } from './handlers/observability';
 import { registerClisHandlers } from './handlers/clis';
 import { registerStocksHandlers } from './handlers/stocks';
+import { registerTradingHandlers } from './handlers/trading';
+import type { TradingService } from '@main/services/trading-service';
 import { registerPluginHandlers } from './handlers/plugins';
 import { registerTerminalHandlers } from './handlers/terminal';
 import type { McpManager } from '@main/services/mcp-manager';
@@ -65,6 +67,7 @@ export function registerIpcHandlers(deps: {
   xai: LLMProvider;
   db: Database;
   workspacesDir: string;
+  trading: TradingService;
 }): void {
   registerSettingsHandlers(deps.settings);
   registerOllamaHandlers(deps.ollama, deps.provider);
@@ -102,6 +105,7 @@ export function registerIpcHandlers(deps: {
   registerUsageHandlers();
   registerClisHandlers({ settings: deps.settings });
   registerStocksHandlers({ settings: deps.settings });
+  registerTradingHandlers({ trading: deps.trading });
   registerBackupHandlers({ repo: deps.repo, settings: deps.settings, workspacesDir: deps.workspacesDir });
   registerDevToolsHandlers({
     settings: deps.settings,

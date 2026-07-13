@@ -146,6 +146,17 @@ export const CHANNELS = {
   STOCKS_ANALYZE: 'stocks:analyze',
   STOCKS_WATCHLIST_GET: 'stocks:watchlist-get',
   STOCKS_WATCHLIST_SET: 'stocks:watchlist-set',
+  TRADING_STATUS: 'trading:status',
+  TRADING_CONNECT: 'trading:connect',
+  TRADING_DISCONNECT: 'trading:disconnect',
+  TRADING_LIVE_ACK: 'trading:live-ack',
+  TRADING_ACCOUNT: 'trading:account',
+  TRADING_GUARDRAILS_SET: 'trading:guardrails-set',
+  TRADING_AUTOPILOT: 'trading:autopilot',
+  TRADING_RUN_CYCLE: 'trading:run-cycle',
+  TRADING_TRADES: 'trading:trades',
+  TRADING_STRATEGIES: 'trading:strategies',
+  TRADING_STRATEGY_STATUS: 'trading:strategy-status',
   PLUGINS_LIST: 'plugins:list',
   PLUGINS_STATUS: 'plugins:status',
   PLUGINS_MARKETPLACES: 'plugins:marketplaces',
@@ -1047,6 +1058,31 @@ export const schemas = {
   clisConnectRequest: z.object({
     ids: z.array(z.string().trim().min(1).max(64)).max(200),
   }),
+
+  tradingConnectRequest: z.object({
+    keyId: z.string().trim().min(1).max(200),
+    secret: z.string().trim().min(1).max(200),
+    paper: z.boolean(),
+  }),
+  tradingLiveAckRequest: z.object({ ack: z.boolean() }),
+  tradingGuardrailsSetRequest: z.object({
+    maxPositionPct: z.number().optional(),
+    riskPctPerTrade: z.number().optional(),
+    maxDailyLossPct: z.number().optional(),
+    maxOpenPositions: z.number().optional(),
+    maxTradesPerDay: z.number().optional(),
+    cashReservePct: z.number().optional(),
+    lossStreakPause: z.number().optional(),
+    minConfidence: z.number().optional(),
+  }),
+  tradingAutopilotRequest: z.object({ enabled: z.boolean() }),
+  tradingTradesRequest: z.object({
+    limit: z.number().int().positive().max(500).optional(),
+  }),
+  tradingStrategyStatusRequest: z.object({
+    id: z.string().min(1).max(64),
+    status: z.enum(['active', 'retired']),
+  }),
 };
 
 export type StocksRange = z.infer<typeof schemas.stocksRange>;
@@ -1102,6 +1138,92 @@ export interface StockAnalysisResponse {
 }
 export interface StockWatchlistResponse {
   symbols: string[];
+}
+
+export interface TradingGuardrailsDto {
+  maxPositionPct: number;
+  riskPctPerTrade: number;
+  maxDailyLossPct: number;
+  maxOpenPositions: number;
+  maxTradesPerDay: number;
+  cashReservePct: number;
+  lossStreakPause: number;
+  minConfidence: number;
+}
+
+export interface TradingCycleReportDto {
+  ranAt: string;
+  marketOpen: boolean;
+  halted: string | null;
+  closed: Array<{ symbol: string; pnl: number; outcome: string; review: string }>;
+  opened: Array<{ symbol: string; qty: number; entry: number; strategy: string }>;
+  skipped: Array<{ symbol: string; reason: string }>;
+  errors: string[];
+}
+
+export interface TradingStatusResponse {
+  configured: boolean;
+  paper: boolean;
+  liveAck: boolean;
+  autopilot: boolean;
+  guardrails: TradingGuardrailsDto;
+  lastCycle: TradingCycleReportDto | null;
+}
+
+export interface TradingPositionDto {
+  symbol: string;
+  qty: number;
+  avgEntryPrice: number;
+  currentPrice: number;
+  unrealizedPl: number;
+  unrealizedPlPct: number;
+}
+
+export interface TradingAccountResponse {
+  equity: number;
+  cash: number;
+  buyingPower: number;
+  status: string;
+  positions: TradingPositionDto[];
+  dayStats: { realizedPnlToday: number; tradesOpenedToday: number; consecutiveLosses: number };
+}
+
+export interface TradingTradeDto {
+  id: string;
+  symbol: string;
+  side: 'buy' | 'sell';
+  qty: number;
+  entryPrice: number;
+  stoploss: number;
+  takeProfit: number;
+  exitPrice: number | null;
+  status: 'open' | 'closed' | 'canceled';
+  outcome: 'win' | 'loss' | 'flat' | null;
+  pnl: number | null;
+  strategyId: string | null;
+  review: string | null;
+  paper: boolean;
+  openedAt: number;
+  closedAt: number | null;
+}
+
+export interface TradingStrategyDto {
+  id: string;
+  name: string;
+  description: string;
+  inspiration: string;
+  status: 'active' | 'retired';
+  wins: number;
+  losses: number;
+  totalPnl: number;
+  lessons: string[];
+  params: {
+    minConfidence: number;
+    requireTrend: 'up' | 'down' | 'any';
+    minFactorScores: Record<string, number>;
+    takeProfitR: number;
+    stopAtrMult: number;
+  };
 }
 
 export interface DetectedCliDto {
