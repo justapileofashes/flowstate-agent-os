@@ -1,12 +1,19 @@
-import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
+import { defineConfig } from 'electron-vite';
 import react from '@vitejs/plugin-react';
 import { resolve } from 'node:path';
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
+    // Bundle every dep into the main bundle. The electron-builder files
+    // whitelist ships NO node_modules except better-sqlite3, so anything left
+    // external (zod, shell-quote, electron-updater, ...) is missing in the
+    // packaged app and crashes with ERR_MODULE_NOT_FOUND. Only the native
+    // module stays external.
     build: {
       outDir: 'out/main',
+      rollupOptions: {
+        external: ['electron', 'better-sqlite3'],
+      },
     },
     resolve: {
       alias: {
