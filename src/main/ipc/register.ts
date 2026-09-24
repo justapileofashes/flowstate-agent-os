@@ -28,7 +28,10 @@ import { registerAgentPackHandlers } from './handlers/agent-pack';
 import { registerDevToolsHandlers } from './handlers/dev-tools';
 import { registerBackupHandlers } from './handlers/backup';
 import { registerObservabilityHandlers } from './handlers/observability';
+import { registerClisHandlers } from './handlers/clis';
 import { registerStocksHandlers } from './handlers/stocks';
+import { registerTradingHandlers } from './handlers/trading';
+import type { TradingService } from '@main/services/trading-service';
 import { registerPluginHandlers } from './handlers/plugins';
 import { registerTerminalHandlers } from './handlers/terminal';
 import type { McpManager } from '@main/services/mcp-manager';
@@ -64,6 +67,7 @@ export function registerIpcHandlers(deps: {
   xai: LLMProvider;
   db: Database;
   workspacesDir: string;
+  trading: TradingService;
 }): void {
   registerSettingsHandlers(deps.settings);
   registerOllamaHandlers(deps.ollama, deps.provider);
@@ -83,15 +87,10 @@ export function registerIpcHandlers(deps: {
   registerZoomHandlers({ settings: deps.settings, repo: deps.repo });
   registerCaptureHandlers({ settings: deps.settings, repo: deps.repo });
   registerBusinessHandlers({
+    db: deps.db,
     settings: deps.settings,
-    repo: deps.repo,
     provider: deps.provider,
-    approvalGate: deps.approvalGate,
-    workspacesDir: deps.workspacesDir,
     mcpManager: deps.mcpManager,
-    brain: deps.brain,
-    audit: deps.audit,
-    snapshots: deps.snapshots,
   });
   registerBrainHandlers({ brain: deps.brain, settings: deps.settings });
   registerSnapshotsHandlers({ service: deps.snapshots, repo: deps.repo, audit: deps.audit });
@@ -99,7 +98,9 @@ export function registerIpcHandlers(deps: {
   registerAgentPackHandlers({ repo: deps.repo, workspacesDir: deps.workspacesDir });
   registerObservabilityHandlers({ repo: deps.repo, auditRepo: deps.auditRepo });
   registerUsageHandlers();
+  registerClisHandlers({ settings: deps.settings });
   registerStocksHandlers({ settings: deps.settings });
+  registerTradingHandlers({ trading: deps.trading });
   registerBackupHandlers({ repo: deps.repo, settings: deps.settings, workspacesDir: deps.workspacesDir });
   registerDevToolsHandlers({
     settings: deps.settings,

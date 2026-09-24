@@ -22,6 +22,8 @@ export const SECRET_SETTING_KEYS: ReadonlySet<string> = new Set([
   'groq_api_key',
   'mistral_api_key',
   'xai_api_key',
+  'alpaca_key_id',
+  'alpaca_secret_key',
   'license.jwt',
   'license.refreshToken',
 ]);

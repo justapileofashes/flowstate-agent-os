@@ -1,138 +1,62 @@
-// Business — Polsia-style "run your business" autopilot. Setup wizard
-// (profile null) → dashboard (goals, live feed, approval queue, briefing,
-// sprint history). Visual port of .design-import/flowstate/project/business.jsx
-// wired to ipc.business.* with the prototype's defensive fixes (guarded feed
-// pushes, no optimistic-timeout approvals, error boundary).
+// Business — an AI team that runs a company (docs/superpowers/specs/
+// 2026-09-24-business-agent-design.md). Shell: company switcher, run-cycle
+// with a transparent cost meter, the approval queue, and tabs. Live events
+// from main append to the feed and bump a version counter the tabs refetch on.
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ipc } from '../lib/ipc';
-import type {
-  BusinessProfileDto,
-  BusinessSprintDto,
-  ProposedActionDto,
-  BusinessFeedEventDto,
-} from '@shared/ipc-channels';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { CompanyDto, FeedEventDto } from '@shared/business/types';
+import type { CycleEstimateDto } from '@shared/business/api';
+import { biz, BizLiveContext, errText, fmtCredits, useBizEvents, type BizLive, type BizTab } from './business/api';
+import { ErrorLine, Icon, Modal, Pill } from './business/ui';
+import { Onboarding } from './business/Onboarding';
+import { Overview } from './business/Overview';
+import { Timeline } from './business/Timeline';
+import { TaskBoard } from './business/TaskBoard';
+import { Outputs } from './business/Outputs';
+import { Knowledge } from './business/Knowledge';
+import { Usage } from './business/Usage';
+import { CeoChat } from './business/CeoChat';
+import { BizSettings } from './business/Settings';
+import { ApprovalDrawer } from './business/ApprovalDrawer';
 
-const BIcon = {
-  play: <svg viewBox="0 0 16 16" fill="none" width="14" height="14"><path d="M5 3.5l7 4.5-7 4.5z" stroke="currentColor" strokeLinejoin="round"/></svg>,
-  plus: <svg viewBox="0 0 16 16" fill="none" width="14" height="14"><path d="M8 3v10 M3 8h10" stroke="currentColor" strokeLinecap="round"/></svg>,
-  x: <svg viewBox="0 0 16 16" fill="none" width="13" height="13"><path d="M3 3l10 10 M13 3L3 13" stroke="currentColor" strokeLinecap="round"/></svg>,
-  check: <svg viewBox="0 0 16 16" fill="none" width="13" height="13"><path d="M3 8.5l3.5 3.5 L13 4" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round"/></svg>,
-  clock: <svg viewBox="0 0 16 16" fill="none" width="14" height="14"><circle cx="8" cy="8" r="5.5" stroke="currentColor"/><path d="M8 5v3l2 1.5" stroke="currentColor"/></svg>,
-  chev: <svg viewBox="0 0 16 16" fill="none" width="13" height="13"><path d="M4 6l4 4 4-4" stroke="currentColor"/></svg>,
-};
+const TABS: Array<{ id: BizTab; label: string }> = [
+  { id: 'overview', label: 'Overview' },
+  { id: 'timeline', label: 'Timeline' },
+  { id: 'tasks', label: 'Tasks' },
+  { id: 'outputs', label: 'Outputs' },
+  { id: 'knowledge', label: 'Knowledge' },
+  { id: 'usage', label: 'Usage' },
+  { id: 'chat', label: 'Ask the CEO' },
+  { id: 'settings', label: 'Settings' },
+];
 
-const ROLE_META: Record<string, { glyph: string }> = {
-  strategy: { glyph: 'ST' },
-  marketing: { glyph: 'MK' },
-  ops: { glyph: 'OP' },
-};
+const STATE_KINDS = new Set<FeedEventDto['kind']>([
+  'cycle-start',
+  'cycle-end',
+  'plan',
+  'task-start',
+  'task-done',
+  'task-failed',
+  'approval-requested',
+  'approval-decided',
+  'action-executed',
+  'action-failed',
+  'summary',
+  'learn',
+  'alert',
+]);
 
-function RoleBadge({ role }: { role: string }): JSX.Element {
-  const m = ROLE_META[role.toLowerCase()] ?? { glyph: role.slice(0, 2).toUpperCase() };
-  const title = role.charAt(0).toUpperCase() + role.slice(1);
-  return (
-    <span className="biz-rolebadge" title={title}>
-      {m.glyph}
-    </span>
-  );
+const LAST_COMPANY = 'biz.company';
+
+function readLast(): string | null {
+  try {
+    return localStorage.getItem(LAST_COMPANY);
+  } catch {
+    return null;
+  }
 }
 
-const ACTION_KIND: Record<string, string> = {
-  email: 'Email',
-  post: 'Post',
-  code: 'Code',
-  other: 'Action',
-};
-
-type PillKind = '' | 'good' | 'bad' | 'streaming';
-
-const ACTION_STATUS: Record<string, { pill: PillKind; label: string }> = {
-  proposed: { pill: '', label: 'proposed' },
-  approved: { pill: 'good', label: 'approved' },
-  executing: { pill: 'streaming', label: 'executing' },
-  done: { pill: 'good', label: 'done' },
-  failed: { pill: 'bad', label: 'failed' },
-  rejected: { pill: '', label: 'rejected' },
-};
-
-const SPRINT_STATUS: Record<string, { pill: PillKind; label: string }> = {
-  planning: { pill: 'streaming', label: 'planning' },
-  running: { pill: 'streaming', label: 'running' },
-  wrapping: { pill: 'streaming', label: 'wrapping' },
-  done: { pill: 'good', label: 'done' },
-  error: { pill: 'bad', label: 'error' },
-};
-
-function Pill({ kind, label }: { kind: PillKind; label: string }): JSX.Element {
-  return (
-    <span className={'pill ' + kind}>
-      <span className="dot"></span>
-      <span>{label}</span>
-    </span>
-  );
-}
-
-/* tiny markdown → JSX (headings, bold, list, paragraphs) */
-function bizMarkdown(md: string | undefined): JSX.Element[] | null {
-  if (!md) return null;
-  const lines = md.split('\n');
-  const out: JSX.Element[] = [];
-  let list: JSX.Element[] = [];
-  const flush = (key: string | number): void => {
-    if (list.length) {
-      out.push(
-        <ul key={'ul' + key} className="biz-md-ul">
-          {list}
-        </ul>,
-      );
-      list = [];
-    }
-  };
-  const fmt = (s: string): React.ReactNode[] => {
-    const parts = s.split(/(\*\*[^*]+\*\*)/g);
-    return parts.map((p, i) =>
-      p.startsWith('**') && p.endsWith('**') ? (
-        <strong key={i} style={{ color: 'var(--ink-strong)', fontWeight: 600 }}>
-          {p.slice(2, -2)}
-        </strong>
-      ) : (
-        <React.Fragment key={i}>{p}</React.Fragment>
-      ),
-    );
-  };
-  lines.forEach((ln, i) => {
-    if (ln.startsWith('## ')) {
-      flush(i);
-      out.push(
-        <div key={i} className="biz-md-h">
-          {ln.slice(3)}
-        </div>,
-      );
-    } else if (ln.startsWith('- ')) {
-      list.push(<li key={i}>{fmt(ln.slice(2))}</li>);
-    } else if (ln.trim() === '') {
-      flush(i);
-    } else {
-      flush(i);
-      out.push(
-        <p key={i} className="biz-md-p">
-          {fmt(ln)}
-        </p>,
-      );
-    }
-  });
-  flush('end');
-  return out;
-}
-
-/* =========================================================
-   Error boundary (prototype's ScreenErrorBoundary fix)
-   ========================================================= */
-class BizErrorBoundary extends React.Component<
-  { children: React.ReactNode },
-  { error: Error | null }
-> {
+class BizErrorBoundary extends React.Component<{ children: React.ReactNode }, { error: Error | null }> {
   override state = { error: null as Error | null };
 
   static getDerivedStateFromError(error: Error): { error: Error } {
@@ -145,6 +69,9 @@ class BizErrorBoundary extends React.Component<
         <div className="biz-page">
           <div className="card biz-card">
             <div className="fc-errline">Business screen crashed: {String(this.state.error)}</div>
+            <button className="btn btn-sm" style={{ marginTop: 12 }} onClick={() => this.setState({ error: null })}>
+              Try again
+            </button>
           </div>
         </div>
       );
@@ -153,463 +80,233 @@ class BizErrorBoundary extends React.Component<
   }
 }
 
-/* =========================================================
-   Setup wizard
-   ========================================================= */
-function BizSetup({
-  initial,
-  onSaved,
-}: {
-  initial: BusinessProfileDto | null;
-  onSaved: () => void;
-}): JSX.Element {
-  const [name, setName] = useState(initial?.name ?? '');
-  const [product, setProduct] = useState(initial?.product ?? '');
-  const [audience, setAudience] = useState(initial?.audience ?? '');
-  const [goals, setGoals] = useState<string[]>(initial?.goals.length ? initial.goals : ['']);
-  const [site, setSite] = useState(initial?.links.site ?? '');
-  const [repo, setRepo] = useState(initial?.links.repo ?? '');
-  const [time, setTime] = useState(initial?.schedule.time ?? '08:00');
-  const [enabled, setEnabled] = useState(initial?.schedule.enabled ?? true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-
-  const setGoal = (i: number, v: string): void => setGoals((g) => g.map((x, j) => (j === i ? v : x)));
-  const addGoal = (): void => setGoals((g) => [...g, '']);
-  const rmGoal = (i: number): void => setGoals((g) => g.filter((_, j) => j !== i));
-
-  const cleanGoals = goals.map((g) => g.trim()).filter(Boolean);
-  const canSave = !!(name.trim() && product.trim() && audience.trim() && cleanGoals.length);
-
-  const save = async (): Promise<void> => {
-    setSaving(true);
-    setError('');
+function RunCycleModal({ company, onClose, onStarted }: { company: CompanyDto; onClose: () => void; onStarted: () => void }): JSX.Element {
+  const [est, setEst] = useState<CycleEstimateDto | null>(null);
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    void biz('cycles.estimate', { companyId: company.id }).then(setEst).catch((e) => setErr(errText(e)));
+  }, [company.id]);
+  const start = async (): Promise<void> => {
+    setBusy(true);
     try {
-      await ipc.business.saveProfile({
-        name: name.trim(),
-        product: product.trim(),
-        audience: audience.trim(),
-        goals: cleanGoals,
-        links: {
-          ...(site.trim() ? { site: site.trim() } : {}),
-          ...(repo.trim() ? { repo: repo.trim() } : {}),
-        },
-        schedule: { enabled, time },
-      });
-      onSaved();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      const r = await biz('cycles.trigger', { companyId: company.id, kind: 'manual' });
+      if (r.error) setErr(r.error);
+      else {
+        onStarted();
+        onClose();
+      }
+    } catch (e) {
+      setErr(errText(e));
     } finally {
-      setSaving(false);
+      setBusy(false);
     }
   };
-
+  const blocked = est?.verdict === 'block';
   return (
-    <div className="biz-setup">
-      <div className="eyebrow">Business</div>
-      <h2 className="section-title" style={{ fontSize: 32, marginTop: 8 }}>
-        {initial ? 'Edit your autopilot' : 'Set up your autopilot'}
-      </h2>
-      <p className="muted mt-3" style={{ maxWidth: 540 }}>
-        Tell Flowstate about your company once. Three role agents — <em className="ink">Strategy</em>,
-        <em className="ink"> Marketing</em>, and <em className="ink"> Ops</em> — run a daily sprint and
-        queue real actions for you to approve.
-      </p>
-
-      <div className="card biz-form">
-        <div className="fc-field-label">Company name</div>
-        <input className="field" value={name} onChange={(e) => setName(e.target.value)} placeholder="Acme Inc." />
-
-        <div className="fc-field-label" style={{ marginTop: 16 }}>What you sell</div>
-        <input className="field" value={product} onChange={(e) => setProduct(e.target.value)} placeholder="A privacy-first analytics SaaS" />
-
-        <div className="fc-field-label" style={{ marginTop: 16 }}>Who it's for</div>
-        <input className="field" value={audience} onChange={(e) => setAudience(e.target.value)} placeholder="Indie SaaS founders" />
-
-        <div className="fc-field-label" style={{ marginTop: 16 }}>Goals</div>
-        <div className="biz-goals">
-          {goals.map((g, i) => (
-            <div key={i} className="biz-goalrow">
-              <input className="field" value={g} onChange={(e) => setGoal(i, e.target.value)} placeholder={`Goal ${i + 1}`} />
-              {goals.length > 1 && (
-                <button className="btn btn-sm btn-ghost" onClick={() => rmGoal(i)}>
-                  {BIcon.x}
-                </button>
-              )}
-            </div>
-          ))}
-          <button className="btn btn-sm btn-ghost" onClick={addGoal} style={{ alignSelf: 'flex-start' }}>
-            {BIcon.plus}
-            <span>Add goal</span>
+    <Modal
+      title="Run a cycle now"
+      onClose={onClose}
+      foot={
+        <>
+          <button className="btn btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" disabled={busy || !est || blocked || est.running} onClick={() => void start()}>
+            {Icon.play}
+            <span>{est?.running ? 'Already running' : `Spend up to ${est ? fmtCredits(est.creditsCap) : '…'} credits`}</span>
           </button>
-        </div>
-
-        <div className="fc-row2" style={{ marginTop: 16 }}>
-          <div style={{ flex: 1 }}>
-            <div className="fc-field-label">
-              Site <span className="faint">opt</span>
-            </div>
-            <input className="field mono" value={site} onChange={(e) => setSite(e.target.value)} placeholder="acme.com" />
-          </div>
-          <div style={{ flex: 1 }}>
-            <div className="fc-field-label">
-              Repo <span className="faint">opt</span>
-            </div>
-            <input className="field mono" value={repo} onChange={(e) => setRepo(e.target.value)} placeholder="github.com/acme/app" />
-          </div>
-        </div>
-
-        <div className="biz-schedule">
-          <div>
-            <div className="fc-field-label">Daily sprint</div>
-            <div className="row gap-2" style={{ alignItems: 'center' }}>
-              <input className="field mono" type="time" value={time} onChange={(e) => setTime(e.target.value)} style={{ width: 110 }} />
-              <button
-                className={'biz-switch ' + (enabled ? 'on' : '')}
-                onClick={() => setEnabled((e) => !e)}
-                role="switch"
-                aria-checked={enabled}
-              >
-                <span className="biz-switch-knob" />
-              </button>
-              <span className="muted text-sm">{enabled ? 'Enabled' : 'Disabled'}</span>
-            </div>
-          </div>
-        </div>
-
-        {error && <div className="fc-errline" style={{ marginTop: 12 }}>{error}</div>}
-
-        <div className="row" style={{ marginTop: 20, justifyContent: 'flex-end' }}>
-          <button className="btn btn-primary" disabled={!canSave || saving} onClick={() => void save()}>
-            {saving ? 'Creating role agents…' : initial ? 'Save changes' : 'Create autopilot'}
-          </button>
-        </div>
+        </>
+      }
+    >
+      <div className="biz-setting-sub" style={{ marginBottom: 12 }}>
+        The CEO reads the company's state, writes a plan within this budget, and dispatches the team. Anything outward
+        lands in your approval queue. Unused credits stay in your balance; failed actions are refunded.
       </div>
-    </div>
+      {est ? (
+        <div className="biz-review">
+          <div className="biz-review-row"><span className="faint">This cycle's cap</span><span className="mono">{fmtCredits(est.creditsCap)} credits{est.usdCap > 0 ? ` · $${est.usdCap.toFixed(2)} max cloud spend` : ''}</span></div>
+          <div className="biz-review-row"><span className="faint">Recent cycles used</span><span className="mono">{est.avgRecentCredits ? `${fmtCredits(est.avgRecentCredits)} credits on average` : 'no history yet'}</span></div>
+          <div className="biz-review-row"><span className="faint">Balance</span><span className="mono">{fmtCredits(est.balance)} credits</span></div>
+          <div className="biz-review-row"><span className="faint">This month</span><span className="mono">{fmtCredits(est.monthSpent)} / {fmtCredits(est.monthlyCredits)}</span></div>
+        </div>
+      ) : (
+        <div className="biz-empty-line muted">Estimating…</div>
+      )}
+      {est?.message && <div className={`biz-action-result ${blocked ? 'fail' : ''}`}>{est.message}</div>}
+      <ErrorLine error={err} />
+    </Modal>
   );
 }
 
-/* =========================================================
-   Approval queue card
-   ========================================================= */
-function BizActionCard({
-  action,
-  busy,
-  onApprove,
-  onReject,
+function CompanyView({
+  company,
+  companies,
+  onSelect,
+  onNew,
+  onChanged,
+  enabled,
 }: {
-  action: ProposedActionDto;
-  busy: boolean;
-  onApprove: (id: string) => void;
-  onReject: (id: string) => void;
+  company: CompanyDto;
+  companies: CompanyDto[];
+  onSelect: (id: string) => void;
+  onNew: () => void;
+  onChanged: () => void;
+  enabled: boolean;
 }): JSX.Element {
-  const [open, setOpen] = useState(false);
-  const st = ACTION_STATUS[action.status] ?? ACTION_STATUS['proposed']!;
-  const isCode = action.kind === 'code' || action.kind === 'email';
-  const pending = action.status === 'proposed';
+  const [tab, setTab] = useState<BizTab>('overview');
+  const [version, setVersion] = useState(0);
+  const [feed, setFeed] = useState<FeedEventDto[]>([]);
+  const [drawer, setDrawer] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [pending, setPending] = useState(0);
+  const [runModal, setRunModal] = useState(false);
+  const [chatPrefill, setChatPrefill] = useState('');
+  const bumpTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  return (
-    <div className={'biz-action ' + (pending ? 'pending' : '')}>
-      <div className="biz-action-head" onClick={() => setOpen((o) => !o)}>
-        <span className={'biz-chev ' + (open ? 'open' : '')}>{BIcon.chev}</span>
-        <RoleBadge role={action.role} />
-        <span className="biz-action-kind">{ACTION_KIND[action.kind] ?? 'Action'}</span>
-        <span className="biz-action-title">{action.title}</span>
-        <span style={{ marginLeft: 'auto', flexShrink: 0 }}>
-          <Pill kind={st.pill} label={st.label} />
-        </span>
-      </div>
-      {open && (
-        <div className="biz-action-body">
-          <div className={isCode ? 'biz-action-pre mono' : 'biz-action-text'}>{action.body}</div>
-          {action.result && (
-            <div className={'biz-action-result ' + (action.status === 'failed' ? 'fail' : '')}>
-              {action.status === 'failed' ? '✕ ' : '→ '}
-              {action.result}
-            </div>
-          )}
-        </div>
-      )}
-      {pending && (
-        <div className="biz-action-foot">
-          <button className="btn btn-sm btn-ghost" disabled={busy} onClick={() => onReject(action.id)}>
-            {BIcon.x}
-            <span>Reject</span>
-          </button>
-          <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => onApprove(action.id)}>
-            {BIcon.check}
-            <span>Approve</span>
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* =========================================================
-   Dashboard
-   ========================================================= */
-const ACTIVE_STATUSES = new Set(['planning', 'running', 'wrapping']);
-
-function BizDashboard({
-  profile,
-  onEditProfile,
-}: {
-  profile: BusinessProfileDto;
-  onEditProfile: () => void;
-}): JSX.Element {
-  const [sprints, setSprints] = useState<BusinessSprintDto[]>([]);
-  const [actions, setActions] = useState<ProposedActionDto[]>([]);
-  const [feed, setFeed] = useState<BusinessFeedEventDto[]>([]);
-  const [busyAction, setBusyAction] = useState<string | null>(null);
-  const [runError, setRunError] = useState('');
-  const feedRef = useRef<HTMLDivElement | null>(null);
-  const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const refresh = useCallback(async (): Promise<void> => {
-    try {
-      const [s, a] = await Promise.all([ipc.business.sprints(), ipc.business.actions()]);
-      setSprints(s.sprints.filter(Boolean));
-      setActions(a.actions.filter(Boolean));
-    } catch {
-      // transient — feed subscription keeps retrying via events
-    }
+  const bump = useCallback((): void => {
+    if (bumpTimer.current) clearTimeout(bumpTimer.current);
+    bumpTimer.current = setTimeout(() => setVersion((v) => v + 1), 350);
   }, []);
 
-  // initial load + feed subscription
   useEffect(() => {
-    void refresh();
-    void ipc.business.feed().then((r) => setFeed(r.events.filter(Boolean))).catch(() => {});
-    const unsubscribe = ipc.business.subscribeFeed((ev) => {
-      if (!ev?.id) return; // guarded push (prototype crash fix)
-      setFeed((f) => {
-        if (f.some((x) => x.id === ev.id)) return f;
-        const next = [...f, ev];
-        return next.length > 500 ? next.slice(-500) : next;
-      });
-      // state-changing events → debounced re-fetch of sprints + actions
-      if (ev.kind !== 'task-tool' && ev.kind !== 'phase') {
-        if (refreshTimer.current) clearTimeout(refreshTimer.current);
-        refreshTimer.current = setTimeout(() => void refresh(), 500);
-      }
-    });
+    setFeed([]);
+    void biz('feed.list', { companyId: company.id, limit: 300 }).then((r) => setFeed(r.events)).catch(() => undefined);
     return () => {
-      unsubscribe();
-      if (refreshTimer.current) clearTimeout(refreshTimer.current);
+      if (bumpTimer.current) clearTimeout(bumpTimer.current);
     };
-  }, [refresh]);
+  }, [company.id]);
 
-  // autoscroll feed
   useEffect(() => {
-    if (feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight;
-  }, [feed]);
+    void biz('companies.dashboard', { companyId: company.id })
+      .then((d) => {
+        setRunning(Boolean(d.running));
+        setPending(d.pendingApprovals);
+      })
+      .catch(() => undefined);
+  }, [company.id, version]);
 
-  const activeSprint = sprints.find((s) => ACTIVE_STATUSES.has(s.status)) ?? sprints[sprints.length - 1];
-  const running = !!sprints.find((s) => ACTIVE_STATUSES.has(s.status));
-  const briefing = [...sprints].reverse().find((s) => s.briefing)?.briefing;
-  const history = [...sprints].reverse().filter((s) => s.id !== activeSprint?.id);
-
-  const runSprint = async (): Promise<void> => {
-    setRunError('');
-    try {
-      const res = await ipc.business.runSprint();
-      if (res.error) setRunError(res.error);
-      await refresh();
-    } catch (err) {
-      setRunError(err instanceof Error ? err.message : String(err));
+  useBizEvents(company.id, (ev) => {
+    if (ev.type === 'feed') {
+      setFeed((f) => (f.some((x) => x.id === ev.event.id) ? f : [...f, ev.event].slice(-300)));
+      if (STATE_KINDS.has(ev.event.kind)) bump();
+    } else {
+      if (ev.what === 'company') onChanged();
+      bump();
     }
-  };
+  });
 
-  const decide = async (id: string, decision: 'approve' | 'reject'): Promise<void> => {
-    setBusyAction(id);
-    try {
-      if (decision === 'approve') await ipc.business.approve(id);
-      else await ipc.business.reject(id);
-    } finally {
-      setBusyAction(null);
-      await refresh();
-    }
-  };
-
-  const pending = actions.filter((a) => a.status === 'proposed');
-  const resolved = actions.filter((a) => a.status !== 'proposed');
-  const sStat = SPRINT_STATUS[activeSprint?.status ?? 'done'] ?? SPRINT_STATUS['done']!;
-
-  const fmtTs = (ts: number): string =>
-    new Date(ts).toLocaleTimeString(undefined, { hour12: false });
+  const live: BizLive = useMemo(
+    () => ({
+      company,
+      version,
+      feed,
+      refresh: () => {
+        onChanged();
+        bump();
+      },
+      openApprovals: () => setDrawer(true),
+      goTab: setTab,
+      askCeo: (prompt: string) => {
+        setChatPrefill(prompt);
+        setTab('chat');
+      },
+      chatPrefill,
+      clearPrefill: () => setChatPrefill(''),
+    }),
+    [company, version, feed, onChanged, bump, chatPrefill],
+  );
 
   return (
-    <div className="screen-enter biz-page">
-      {/* header */}
-      <div className="biz-header">
-        <div>
-          <div className="eyebrow">Business · autopilot</div>
-          <h2 className="section-title" style={{ fontSize: 32, marginTop: 8 }}>{profile.name}</h2>
-          <div className="biz-sched muted">
-            {BIcon.clock}
-            <span>Daily sprint {profile.schedule.enabled ? 'at ' + profile.schedule.time : 'paused'}</span>
-            <button className="btn btn-sm btn-ghost" onClick={onEditProfile}>Edit</button>
+    <BizLiveContext.Provider value={live}>
+      <div className="screen-enter biz-page">
+        <div className="biz-header">
+          <div style={{ minWidth: 0 }}>
+            <div className="eyebrow">Business</div>
+            <div className="biz-title-row">
+              <h2 className="section-title biz-title">{company.name}</h2>
+              <select
+                  className="field biz-company-select"
+                  value={company.id}
+                  aria-label="Switch company"
+                  onChange={(e) => (e.target.value === '__new' ? onNew() : onSelect(e.target.value))}
+                >
+                  {companies.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                  <option value="__new">+ New company…</option>
+                </select>
+            </div>
+            <div className="biz-sched muted">
+              {Icon.clock}
+              <span>
+                {!enabled
+                  ? 'Emergency stop is on — nothing runs'
+                  : company.status === 'paused'
+                    ? 'Paused — scheduled cycles are off'
+                    : company.config.schedule.enabled
+                      ? `Plans at ${company.config.schedule.morning}, reports at ${company.config.schedule.evening}`
+                      : 'Manual cycles only'}
+                {' · '}
+                {company.config.autonomy} mode
+              </span>
+            </div>
           </div>
-        </div>
-        <div className="row gap-2" style={{ alignItems: 'center' }}>
-          {running && activeSprint && <Pill kind="streaming" label={`sprint ${activeSprint.status}`} />}
-          <button className="btn btn-primary" disabled={running} onClick={() => void runSprint()}>
-            {BIcon.play}
-            <span>Run sprint now</span>
-          </button>
-        </div>
-      </div>
-
-      {runError && <div className="fc-errline" style={{ marginBottom: 12 }}>{runError}</div>}
-
-      <div className="biz-grid">
-        {/* left column */}
-        <div className="biz-col">
-          {/* goals */}
-          <div className="card biz-card">
-            <div className="biz-card-h">
-              <span>Today's goals</span>
-              <Pill kind={sStat.pill} label={sStat.label} />
-            </div>
-            {activeSprint && activeSprint.goals.length > 0 ? (
-              <ul className="biz-goallist">
-                {activeSprint.goals.map((g, i) => (
-                  <li key={i}>{g}</li>
-                ))}
-              </ul>
-            ) : (
-              <div className="biz-empty-line muted">No sprint yet — run one to get goals.</div>
-            )}
-          </div>
-
-          {/* approval queue — centerpiece */}
-          <div className="card biz-card">
-            <div className="biz-card-h">
-              <span>Approval queue</span>
-              {pending.length > 0 && (
-                <span className="pill">
-                  <span>{pending.length} waiting</span>
-                </span>
-              )}
-            </div>
-            {pending.length === 0 && resolved.length === 0 && (
-              <div className="biz-empty-line muted">No actions proposed yet.</div>
-            )}
-            <div className="biz-actions">
-              {pending.map(
-                (a) =>
-                  a && (
-                    <BizActionCard
-                      key={a.id}
-                      action={a}
-                      busy={busyAction === a.id}
-                      onApprove={(id) => void decide(id, 'approve')}
-                      onReject={(id) => void decide(id, 'reject')}
-                    />
-                  ),
-              )}
-            </div>
-            {resolved.length > 0 && (
-              <>
-                <div className="biz-resolved-label">Resolved</div>
-                <div className="biz-actions">
-                  {resolved.map(
-                    (a) =>
-                      a && (
-                        <BizActionCard
-                          key={a.id}
-                          action={a}
-                          busy={busyAction === a.id}
-                          onApprove={(id) => void decide(id, 'approve')}
-                          onReject={(id) => void decide(id, 'reject')}
-                        />
-                      ),
-                  )}
-                </div>
-              </>
-            )}
-          </div>
-
-          {/* briefing */}
-          <div className="card biz-card">
-            <div className="biz-card-h">
-              <span>Latest briefing</span>
-            </div>
-            {briefing ? (
-              <div className="biz-briefing">{bizMarkdown(briefing)}</div>
-            ) : (
-              <div className="biz-empty-line muted">The first briefing lands after a sprint completes.</div>
-            )}
+          <div className="row gap-2" style={{ alignItems: 'center', flexShrink: 0 }}>
+            {running && <Pill kind="streaming" label="cycle running" />}
+            {!enabled && <Pill kind="bad" label="stopped" />}
+            {company.status === 'paused' && <Pill label="paused" />}
+            <button className={`btn ${pending ? 'biz-queue-btn hot' : ''}`} onClick={() => setDrawer(true)}>
+              {Icon.inbox}
+              <span>{pending ? `${pending} waiting` : 'Approvals'}</span>
+            </button>
+            <button className="btn btn-primary" disabled={running || !enabled} onClick={() => setRunModal(true)}>
+              {Icon.play}
+              <span>Run cycle</span>
+            </button>
           </div>
         </div>
 
-        {/* right column */}
-        <div className="biz-col">
-          {/* live feed */}
-          <div className="card biz-card biz-feed-card">
-            <div className="biz-card-h">
-              <span>Live activity</span>
-              <Pill kind="streaming" label="live" />
-            </div>
-            <div className="biz-feed scroll" ref={feedRef} role="log" aria-live="polite" aria-label="business activity feed">
-              {feed.filter(Boolean).map((ev) => (
-                <div key={ev.id} className={'biz-feed-line kind-' + ev.kind}>
-                  <span className="biz-feed-t">{fmtTs(ev.ts)}</span>
-                  {ev.role ? <RoleBadge role={ev.role} /> : <span className="biz-feed-sys">·</span>}
-                  <span className="biz-feed-text">{ev.text}</span>
-                </div>
-              ))}
-              {feed.length === 0 && (
-                <div className="biz-feed-line">
-                  <span className="biz-feed-sys">·</span>
-                  <span className="biz-feed-text">Waiting for the first sprint…</span>
-                </div>
-              )}
-            </div>
-          </div>
+        <div className="biz-tabs" role="tablist">
+          {TABS.map((t) => (
+            <button key={t.id} role="tab" aria-selected={tab === t.id} className={`biz-tab ${tab === t.id ? 'on' : ''}`} onClick={() => setTab(t.id)}>
+              {t.label}
+            </button>
+          ))}
+        </div>
 
-          {/* sprint history */}
-          <div className="card biz-card">
-            <div className="biz-card-h">
-              <span>Sprint history</span>
-            </div>
-            <div className="biz-history">
-              {history.length === 0 && <div className="biz-empty-line muted">No past sprints yet.</div>}
-              {history.map((h) => {
-                const hs = SPRINT_STATUS[h.status] ?? SPRINT_STATUS['done']!;
-                return (
-                  <div key={h.id} className="biz-hrow">
-                    <span className="biz-hdate">{new Date(h.startedAt).toLocaleDateString()}</span>
-                    <Pill kind={hs.pill} label={hs.label} />
-                    <span className="biz-hmeta mono">
-                      {h.goals.length} goals · {h.tasks.length} tasks
-                    </span>
-                    {h.error && <span className="biz-herror">{h.error}</span>}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+        <div className="biz-tabpanel" role="tabpanel">
+          {tab === 'overview' && <Overview />}
+          {tab === 'timeline' && <Timeline />}
+          {tab === 'tasks' && <TaskBoard />}
+          {tab === 'outputs' && <Outputs />}
+          {tab === 'knowledge' && <Knowledge />}
+          {tab === 'usage' && <Usage />}
+          {tab === 'chat' && <CeoChat />}
+          {tab === 'settings' && <BizSettings />}
         </div>
       </div>
-    </div>
+      {drawer && <ApprovalDrawer onClose={() => setDrawer(false)} />}
+      {runModal && <RunCycleModal company={company} onClose={() => setRunModal(false)} onStarted={bump} />}
+    </BizLiveContext.Provider>
   );
 }
 
-/* =========================================================
-   Business screen (wizard ↔ dashboard)
-   ========================================================= */
 export function Business(): JSX.Element {
-  const [profile, setProfile] = useState<BusinessProfileDto | null>(null);
-  const [loaded, setLoaded] = useState(false);
-  const [editing, setEditing] = useState(false);
+  const [companies, setCompanies] = useState<CompanyDto[] | null>(null);
+  const [selected, setSelected] = useState<string | null>(readLast());
+  const [creating, setCreating] = useState(false);
+  const [enabled, setEnabled] = useState(true);
+  const [error, setError] = useState('');
 
   const load = useCallback(async (): Promise<void> => {
     try {
-      const r = await ipc.business.getProfile();
-      setProfile(r.profile);
-    } finally {
-      setLoaded(true);
+      const [list, status] = await Promise.all([biz('companies.list', {}), biz('status', {})]);
+      setCompanies(list.companies);
+      setEnabled(status.enabled);
+    } catch (e) {
+      setError(errText(e));
+      setCompanies([]);
     }
   }, []);
 
@@ -617,19 +314,42 @@ export function Business(): JSX.Element {
     void load();
   }, [load]);
 
-  if (!loaded) return <div className="biz-page" />;
+  const select = (id: string): void => {
+    setSelected(id);
+    setCreating(false);
+    try {
+      localStorage.setItem(LAST_COMPANY, id);
+    } catch {
+      // per-viewer convenience only
+    }
+  };
+
+  if (!companies) return <div className="biz-page" />;
+  const company = companies.find((c) => c.id === selected) ?? companies[0] ?? null;
 
   return (
     <BizErrorBoundary>
-      {profile && !editing ? (
-        <BizDashboard profile={profile} onEditProfile={() => setEditing(true)} />
-      ) : (
-        <BizSetup
-          initial={profile}
-          onSaved={() => {
-            setEditing(false);
-            void load();
+      {error && (
+        <div className="biz-page">
+          <ErrorLine error={error} />
+        </div>
+      )}
+      {!company || creating ? (
+        <Onboarding
+          onCreated={(c) => {
+            void load().then(() => select(c.id));
           }}
+          {...(company ? { onCancel: () => setCreating(false) } : {})}
+        />
+      ) : (
+        <CompanyView
+          key={company.id}
+          company={company}
+          companies={companies}
+          onSelect={select}
+          onNew={() => setCreating(true)}
+          onChanged={() => void load()}
+          enabled={enabled}
         />
       )}
     </BizErrorBoundary>

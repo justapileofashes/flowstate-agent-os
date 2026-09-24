@@ -237,6 +237,11 @@ interface FlowstateApi {
   system: {
     stats: () => Promise<SystemStatsGetResponse>;
   };
+  clis: {
+    detect: () => Promise<import('@shared/ipc-channels').ClisDetectResponse>;
+    get: () => Promise<import('@shared/ipc-channels').ClisGetResponse>;
+    connect: (ids: string[]) => Promise<{ ok: true }>;
+  };
   backup: {
     export: () => Promise<import('@shared/ipc-channels').BackupExportResponse>;
     import: () => Promise<import('@shared/ipc-channels').BackupImportResponse>;
@@ -387,26 +392,12 @@ interface FlowstateApi {
     testTranscriber: () => Promise<{ ok: boolean; error?: string }>;
   };
   business: {
-    getProfile: () => Promise<import('@shared/ipc-channels').BusinessGetProfileResponse>;
-    saveProfile: (profile: {
-      name: string;
-      product: string;
-      audience: string;
-      goals: string[];
-      links?: { site?: string; repo?: string };
-      schedule: { enabled: boolean; time: string };
-    }) => Promise<import('@shared/ipc-channels').BusinessSaveProfileResponse>;
-    runSprint: () => Promise<import('@shared/ipc-channels').BusinessRunSprintResponse>;
-    sprints: () => Promise<import('@shared/ipc-channels').BusinessSprintsResponse>;
-    actions: () => Promise<import('@shared/ipc-channels').BusinessActionsResponse>;
-    approve: (actionId: string) => Promise<{ ok: boolean; error?: string }>;
-    reject: (actionId: string) => Promise<{ ok: boolean; error?: string }>;
-    feed: (limit?: number) => Promise<import('@shared/ipc-channels').BusinessFeedResponse>;
-    subscribeFeed: (
-      cb: (event: import('@shared/ipc-channels').BusinessFeedEventDto) => void,
-    ) => () => void;
-  };
-  stocks: {
+    rpc: <M extends import('@shared/business/api').BizMethod>(
+      method: M,
+      params: import('@shared/business/api').BizRequest<M>,
+    ) => Promise<import('@shared/business/api').BizRpcResult<M>>;
+    subscribe: (cb: (event: import('@shared/business/api').BizEvent) => void) => () => void;
+  };  stocks: {
     quote: (symbol: string) => Promise<import('@shared/ipc-channels').StockQuoteResponse>;
     history: (
       symbol: string,
@@ -423,6 +414,34 @@ interface FlowstateApi {
     setWatchlist: (
       symbols: string[],
     ) => Promise<import('@shared/ipc-channels').StockWatchlistResponse>;
+  };
+  trading: {
+    status: () => Promise<import('@shared/ipc-channels').TradingStatusResponse>;
+    connect: (
+      keyId: string,
+      secret: string,
+      paper: boolean,
+    ) => Promise<{ ok: boolean; error?: string; equity?: number }>;
+    disconnect: () => Promise<{ ok: boolean }>;
+    setLiveAck: (ack: boolean) => Promise<{ ok: boolean }>;
+    account: () => Promise<import('@shared/ipc-channels').TradingAccountResponse>;
+    setGuardrails: (
+      patch: Partial<import('@shared/ipc-channels').TradingGuardrailsDto>,
+    ) => Promise<{ guardrails: import('@shared/ipc-channels').TradingGuardrailsDto }>;
+    setAutopilot: (enabled: boolean) => Promise<{ ok: boolean; error?: string }>;
+    runCycle: () => Promise<{
+      ok: boolean;
+      error?: string;
+      report?: import('@shared/ipc-channels').TradingCycleReportDto;
+    }>;
+    trades: (limit?: number) => Promise<{
+      trades: import('@shared/ipc-channels').TradingTradeDto[];
+      lessons: string[];
+    }>;
+    strategies: () => Promise<{
+      strategies: import('@shared/ipc-channels').TradingStrategyDto[];
+    }>;
+    setStrategyStatus: (id: string, status: 'active' | 'retired') => Promise<{ ok: boolean }>;
   };
 }
 

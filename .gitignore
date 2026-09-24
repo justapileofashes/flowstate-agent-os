@@ -31,6 +31,8 @@ data/
 graphify-out/
 supabase/.temp/
 skills/
+# ...but the business agent's skill modules are source code.
+!src/main/business/skills/
 skills-lock.json
 
 # Claude Code local workspace + machine-specific settings

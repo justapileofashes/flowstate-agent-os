@@ -54,15 +54,9 @@ export const CHANNELS = {
   CAPTURE_JOBS: 'capture:jobs',
   CAPTURE_SAVE_TRANSCRIBER: 'capture:save-transcriber',
   CAPTURE_TEST_TRANSCRIBER: 'capture:test-transcriber',
-  BUSINESS_GET_PROFILE: 'business:get-profile',
-  BUSINESS_SAVE_PROFILE: 'business:save-profile',
-  BUSINESS_RUN_SPRINT: 'business:run-sprint',
-  BUSINESS_SPRINTS: 'business:sprints',
-  BUSINESS_ACTIONS: 'business:actions',
-  BUSINESS_APPROVE: 'business:approve',
-  BUSINESS_REJECT: 'business:reject',
-  BUSINESS_FEED: 'business:feed',
-  BUSINESS_FEED_EVENT: 'business:feed-event', // broadcast main → renderer
+  // Business agent: one typed RPC channel (schemas in @shared/business/api).
+  BUSINESS_RPC: 'business:rpc',
+  BUSINESS_EVENT: 'business:event', // broadcast main → renderer
   AGENTS_AUTO_ASSIGN_MODELS: 'agents:auto-assign-models',
   BRAIN_STATUS: 'brain:status',
   BRAIN_LIST: 'brain:list',
@@ -119,6 +113,9 @@ export const CHANNELS = {
   PROMPT_HISTORY_GET: 'prompt-history:get',
   PROMPT_HISTORY_PUSH: 'prompt-history:push',
   USAGE_SUMMARY: 'usage:summary',
+  CLIS_DETECT: 'clis:detect',
+  CLIS_GET: 'clis:get',
+  CLIS_CONNECT: 'clis:connect',
   BACKUP_EXPORT: 'backup:export',
   BACKUP_IMPORT: 'backup:import',
   FLOWCLAW_RUN_TASK: 'flowclaw:run-task',
@@ -143,6 +140,17 @@ export const CHANNELS = {
   STOCKS_ANALYZE: 'stocks:analyze',
   STOCKS_WATCHLIST_GET: 'stocks:watchlist-get',
   STOCKS_WATCHLIST_SET: 'stocks:watchlist-set',
+  TRADING_STATUS: 'trading:status',
+  TRADING_CONNECT: 'trading:connect',
+  TRADING_DISCONNECT: 'trading:disconnect',
+  TRADING_LIVE_ACK: 'trading:live-ack',
+  TRADING_ACCOUNT: 'trading:account',
+  TRADING_GUARDRAILS_SET: 'trading:guardrails-set',
+  TRADING_AUTOPILOT: 'trading:autopilot',
+  TRADING_RUN_CYCLE: 'trading:run-cycle',
+  TRADING_TRADES: 'trading:trades',
+  TRADING_STRATEGIES: 'trading:strategies',
+  TRADING_STRATEGY_STATUS: 'trading:strategy-status',
   PLUGINS_LIST: 'plugins:list',
   PLUGINS_STATUS: 'plugins:status',
   PLUGINS_MARKETPLACES: 'plugins:marketplaces',
@@ -722,27 +730,6 @@ export const schemas = {
     command: z.string().trim().max(1000).optional(),
   }),
 
-  businessSaveProfileRequest: z.object({
-    name: z.string().trim().min(1).max(120),
-    product: z.string().trim().min(1).max(500),
-    audience: z.string().trim().min(1).max(500),
-    goals: z.array(z.string().trim().min(1).max(300)).min(1).max(10),
-    links: z
-      .object({
-        site: z.string().trim().max(300).optional(),
-        repo: z.string().trim().max(300).optional(),
-      })
-      .optional(),
-    schedule: z.object({
-      enabled: z.boolean(),
-      time: z.string().regex(/^\d{2}:\d{2}$/),
-    }),
-  }),
-  businessActionIdRequest: z.object({ actionId: z.string().min(1) }),
-  businessFeedRequest: z.object({
-    limit: z.number().int().positive().max(500).optional(),
-  }),
-
   agentsAutoAssignRequest: z.object({}),
   agentsAutoAssignResponse: z.object({
     matches: z.array(
@@ -1041,6 +1028,34 @@ export const schemas = {
   stocksWatchlistSetRequest: z.object({
     symbols: z.array(z.string().trim().min(1).max(20)).max(100),
   }),
+  clisConnectRequest: z.object({
+    ids: z.array(z.string().trim().min(1).max(64)).max(200),
+  }),
+
+  tradingConnectRequest: z.object({
+    keyId: z.string().trim().min(1).max(200),
+    secret: z.string().trim().min(1).max(200),
+    paper: z.boolean(),
+  }),
+  tradingLiveAckRequest: z.object({ ack: z.boolean() }),
+  tradingGuardrailsSetRequest: z.object({
+    maxPositionPct: z.number().optional(),
+    riskPctPerTrade: z.number().optional(),
+    maxDailyLossPct: z.number().optional(),
+    maxOpenPositions: z.number().optional(),
+    maxTradesPerDay: z.number().optional(),
+    cashReservePct: z.number().optional(),
+    lossStreakPause: z.number().optional(),
+    minConfidence: z.number().optional(),
+  }),
+  tradingAutopilotRequest: z.object({ enabled: z.boolean() }),
+  tradingTradesRequest: z.object({
+    limit: z.number().int().positive().max(500).optional(),
+  }),
+  tradingStrategyStatusRequest: z.object({
+    id: z.string().min(1).max(64),
+    status: z.enum(['active', 'retired']),
+  }),
 };
 
 export type StocksRange = z.infer<typeof schemas.stocksRange>;
@@ -1096,6 +1111,115 @@ export interface StockAnalysisResponse {
 }
 export interface StockWatchlistResponse {
   symbols: string[];
+}
+
+export interface TradingGuardrailsDto {
+  maxPositionPct: number;
+  riskPctPerTrade: number;
+  maxDailyLossPct: number;
+  maxOpenPositions: number;
+  maxTradesPerDay: number;
+  cashReservePct: number;
+  lossStreakPause: number;
+  minConfidence: number;
+}
+
+export interface TradingCycleReportDto {
+  ranAt: string;
+  marketOpen: boolean;
+  halted: string | null;
+  closed: Array<{ symbol: string; pnl: number; outcome: string; review: string }>;
+  opened: Array<{ symbol: string; qty: number; entry: number; strategy: string }>;
+  skipped: Array<{ symbol: string; reason: string }>;
+  errors: string[];
+}
+
+export interface TradingStatusResponse {
+  configured: boolean;
+  paper: boolean;
+  liveAck: boolean;
+  autopilot: boolean;
+  guardrails: TradingGuardrailsDto;
+  lastCycle: TradingCycleReportDto | null;
+}
+
+export interface TradingPositionDto {
+  symbol: string;
+  qty: number;
+  avgEntryPrice: number;
+  currentPrice: number;
+  unrealizedPl: number;
+  unrealizedPlPct: number;
+}
+
+export interface TradingAccountResponse {
+  equity: number;
+  cash: number;
+  buyingPower: number;
+  status: string;
+  positions: TradingPositionDto[];
+  dayStats: { realizedPnlToday: number; tradesOpenedToday: number; consecutiveLosses: number };
+}
+
+export interface TradingTradeDto {
+  id: string;
+  symbol: string;
+  side: 'buy' | 'sell';
+  qty: number;
+  entryPrice: number;
+  stoploss: number;
+  takeProfit: number;
+  exitPrice: number | null;
+  status: 'open' | 'closed' | 'canceled';
+  outcome: 'win' | 'loss' | 'flat' | null;
+  pnl: number | null;
+  strategyId: string | null;
+  review: string | null;
+  paper: boolean;
+  openedAt: number;
+  closedAt: number | null;
+}
+
+export interface TradingStrategyDto {
+  id: string;
+  name: string;
+  description: string;
+  inspiration: string;
+  status: 'active' | 'retired';
+  wins: number;
+  losses: number;
+  totalPnl: number;
+  lessons: string[];
+  params: {
+    minConfidence: number;
+    requireTrend: 'up' | 'down' | 'any';
+    minFactorScores: Record<string, number>;
+    takeProfitR: number;
+    stopAtrMult: number;
+  };
+}
+
+export interface DetectedCliDto {
+  id: string;
+  name: string;
+  command: string;
+  category: string;
+  description: string;
+  installed: boolean;
+  version: string | null;
+  path: string | null;
+  docsUrl: string | null;
+}
+
+export interface ClisDetectResponse {
+  clis: DetectedCliDto[];
+}
+
+export interface ClisGetResponse {
+  connected: string[];
+  onboardingSeen: boolean;
+  /** User home dir — default working directory when launching a coding CLI. */
+  homeDir: string;
 }
 
 export interface SnapshotDto {
@@ -1542,94 +1666,6 @@ export interface CaptureStartResponse {
 }
 export interface CaptureJobsResponse {
   jobs: CaptureJobDto[];
-}
-
-// ── Business autopilot ───────────────────────────────────────────────────────
-
-export interface BusinessProfileDto {
-  name: string;
-  product: string;
-  audience: string;
-  goals: string[];
-  links: { site?: string; repo?: string };
-  roleAgentIds: { strategy: string; marketing: string; ops: string };
-  schedule: { enabled: boolean; time: string };
-  createdAt: number;
-}
-
-export interface BusinessSprintTaskDto {
-  id: string;
-  role: 'marketing' | 'ops';
-  instruction: string;
-  status: 'pending' | 'running' | 'done' | 'error';
-  output?: string;
-  error?: string;
-}
-
-export interface BusinessSprintDto {
-  id: string;
-  status: 'planning' | 'running' | 'wrapping' | 'done' | 'error';
-  goals: string[];
-  tasks: BusinessSprintTaskDto[];
-  briefing?: string;
-  error?: string;
-  startedAt: number;
-  finishedAt?: number;
-}
-
-export interface ProposedActionDto {
-  id: string;
-  sprintId: string;
-  role: 'strategy' | 'marketing' | 'ops';
-  kind: 'email' | 'post' | 'code' | 'other';
-  title: string;
-  body: string;
-  status: 'proposed' | 'approved' | 'executing' | 'done' | 'failed' | 'rejected';
-  result?: string;
-  createdAt: number;
-  updatedAt: number;
-}
-
-export interface BusinessFeedEventDto {
-  id: string;
-  ts: number;
-  sprintId?: string;
-  role?: string;
-  kind:
-    | 'sprint-start'
-    | 'phase'
-    | 'task-start'
-    | 'task-tool'
-    | 'task-done'
-    | 'action-proposed'
-    | 'action-executed'
-    | 'action-failed'
-    | 'briefing'
-    | 'sprint-end'
-    | 'error';
-  text: string;
-}
-
-export type BusinessSaveProfileRequest = z.infer<typeof schemas.businessSaveProfileRequest>;
-export interface BusinessGetProfileResponse {
-  profile: BusinessProfileDto | null;
-}
-export interface BusinessSaveProfileResponse {
-  ok: boolean;
-  profile: BusinessProfileDto;
-}
-export interface BusinessRunSprintResponse {
-  sprintId?: string;
-  error?: string;
-}
-export interface BusinessSprintsResponse {
-  sprints: BusinessSprintDto[];
-}
-export interface BusinessActionsResponse {
-  actions: ProposedActionDto[];
-}
-export interface BusinessFeedResponse {
-  events: BusinessFeedEventDto[];
 }
 
 export interface AgentAutoAssignMatchDto {

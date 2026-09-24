@@ -22,10 +22,12 @@ import { sceneSchema, buildThreeViewer, buildOpenSCAD } from './model-3d';
 import { app } from 'electron';
 import { join } from 'node:path';
 import { MarketDataService } from '@main/services/market-data';
+import { getTradingService } from '@main/services/trading-service';
 import { rsi, macd, atr, bollinger, sma, ema, swingLevels, trend } from '@shared/indicators';
 import { detectPatterns } from '@shared/patterns';
 import { forecastCone } from '@shared/forecast';
 import { buildStockChart } from '@shared/stock-chart';
+import { duckDuckGoSearch } from '@main/services/web-search';
 import type { Range } from '@shared/market-types';
 
 export const MAX_TOOL_OUTPUT_BYTES = 100_000;
@@ -88,6 +90,30 @@ const argsSchemas = {
   }),
   generate_3d_model: sceneSchema,
   skill: z.object({ name: z.string().min(1).max(80) }),
+  trading_account: z.object({}),
+  place_trade: z.object({
+    symbol: z.string().min(1).max(10),
+    side: z.enum(['buy', 'sell']),
+    entry: z.number().positive(),
+    stoploss: z.number().positive(),
+    takeProfit: z.number().positive(),
+    qty: z.number().positive().max(100_000).optional(),
+    confidence: z.number().min(0).max(1),
+    reason: z.string().min(1).max(2000),
+    strategyId: z.string().max(64).optional(),
+  }),
+  close_trade: z.object({
+    symbol: z.string().min(1).max(10),
+    reason: z.string().min(1).max(2000),
+  }),
+  list_strategies: z.object({}),
+  save_strategy: z.object({
+    name: z.string().min(1).max(120),
+    description: z.string().min(1).max(2000),
+    inspiration: z.string().min(1).max(2000),
+    params: z.record(z.unknown()),
+  }),
+  trade_journal: z.object({ limit: z.number().int().positive().max(200).optional() }),
 } as const;
 
 type ToolName = keyof typeof argsSchemas;
@@ -415,6 +441,110 @@ export class ToolDispatcher {
             return failure(toolCallId, name, err instanceof Error ? err.message : String(err));
           }
         }
+        case 'trading_account': {
+          const trading = getTradingService();
+          if (!trading) return failure(toolCallId, name, 'Trading not initialized');
+          if (!trading.isConfigured()) {
+            return failure(toolCallId, name, 'Trading not connected — the user must add Alpaca API keys on the Stocks screen');
+          }
+          try {
+            const [status, account] = [trading.status(), await trading.account()];
+            return ok(
+              toolCallId,
+              name,
+              JSON.stringify({
+                mode: status.paper ? 'paper' : 'live',
+                autopilot: status.autopilot,
+                guardrails: status.guardrails,
+                dayStats: trading.dayStats(),
+                account,
+              }),
+            );
+          } catch (err) {
+            return failure(toolCallId, name, err instanceof Error ? err.message : String(err));
+          }
+        }
+        case 'place_trade': {
+          const trading = getTradingService();
+          if (!trading) return failure(toolCallId, name, 'Trading not initialized');
+          if (!trading.isConfigured()) {
+            return failure(toolCallId, name, 'Trading not connected — the user must add Alpaca API keys on the Stocks screen');
+          }
+          const a = parsed.data as z.infer<typeof argsSchemas.place_trade>;
+          try {
+            const { verdict, trade } = await trading.placeTrade(a);
+            return ok(
+              toolCallId,
+              name,
+              JSON.stringify({
+                placed: verdict.allowed,
+                qty: verdict.qty,
+                notional: verdict.notional,
+                blocked: verdict.blocked,
+                notes: verdict.reasons,
+                ...(trade ? { tradeId: trade.id } : {}),
+              }),
+            );
+          } catch (err) {
+            return failure(toolCallId, name, err instanceof Error ? err.message : String(err));
+          }
+        }
+        case 'close_trade': {
+          const trading = getTradingService();
+          if (!trading || !trading.isConfigured()) {
+            return failure(toolCallId, name, 'Trading not connected');
+          }
+          const a = parsed.data as z.infer<typeof argsSchemas.close_trade>;
+          try {
+            const res = await trading.closeBySymbol(a.symbol, a.reason);
+            return res.ok
+              ? ok(toolCallId, name, JSON.stringify(res))
+              : failure(toolCallId, name, res.detail);
+          } catch (err) {
+            return failure(toolCallId, name, err instanceof Error ? err.message : String(err));
+          }
+        }
+        case 'list_strategies': {
+          const trading = getTradingService();
+          if (!trading) return failure(toolCallId, name, 'Trading not initialized');
+          return ok(toolCallId, name, JSON.stringify({ strategies: trading.strategies() }));
+        }
+        case 'save_strategy': {
+          const trading = getTradingService();
+          if (!trading) return failure(toolCallId, name, 'Trading not initialized');
+          const a = parsed.data as z.infer<typeof argsSchemas.save_strategy>;
+          const s = trading.createStrategy(a);
+          return ok(
+            toolCallId,
+            name,
+            JSON.stringify({ ok: true, id: s.id, name: s.name, params: s.params, status: s.status }),
+          );
+        }
+        case 'trade_journal': {
+          const trading = getTradingService();
+          if (!trading) return failure(toolCallId, name, 'Trading not initialized');
+          const a = parsed.data as z.infer<typeof argsSchemas.trade_journal>;
+          const trades = trading.trades(a.limit ?? 25).map((t) => ({
+            symbol: t.symbol,
+            side: t.side,
+            qty: t.qty,
+            entry: t.entryPrice,
+            stoploss: t.stoploss,
+            takeProfit: t.takeProfit,
+            exit: t.exitPrice,
+            status: t.status,
+            outcome: t.outcome,
+            pnl: t.pnl,
+            review: t.review,
+            openedAt: new Date(t.openedAt).toISOString(),
+            rationale: t.rationale.slice(0, 1000),
+          }));
+          return ok(
+            toolCallId,
+            name,
+            JSON.stringify({ trades, lessons: trading.recentLessons(10) }),
+          );
+        }
         case 'generate_3d_model': {
           const scene = parsed.data as z.infer<typeof argsSchemas.generate_3d_model>;
           const safeName = (scene.name || 'model').replace(/[^a-z0-9-_]+/gi, '_').slice(0, 60) || 'model';
@@ -614,175 +744,4 @@ function serializeResult(v: unknown): unknown {
 function lastDefined<T>(arr: (T | null)[]): T | null {
   for (let i = arr.length - 1; i >= 0; i--) if (arr[i] !== null) return arr[i] as T;
   return null;
-}
-
-// ── DuckDuckGo HTML search (no API key) ────────────────────────────────────
-
-interface SearchHit {
-  title: string;
-  snippet: string;
-  url: string;
-}
-
-const UA_DESKTOP =
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
-
-async function duckDuckGoSearch(query: string, limit: number): Promise<SearchHit[]> {
-  // Try html.duckduckgo.com first; fall back to lite.duckduckgo.com if that
-  // returns 0 hits (their bot filter rotates which page works). Final fallback
-  // is the public Instant Answer JSON API for at least an abstract.
-  const headers = {
-    'User-Agent': UA_DESKTOP,
-    Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-    'Accept-Language': 'en-US,en;q=0.9',
-    Referer: 'https://duckduckgo.com/',
-  };
-
-  const hits: SearchHit[] = [];
-
-  // Helper to parse the standard HTML result page.
-  const parseHtmlPage = (html: string): void => {
-    const blockRe =
-      /<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>[\s\S]*?<a[^>]+class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g;
-    let match: RegExpExecArray | null;
-    while ((match = blockRe.exec(html)) !== null && hits.length < limit) {
-      const rawUrl = decodeURIComponent(match[1]!.replace(/&amp;/g, '&'));
-      let target = rawUrl;
-      const wrap = /uddg=([^&]+)/.exec(rawUrl);
-      if (wrap) target = decodeURIComponent(wrap[1]!);
-      hits.push({
-        url: target,
-        title: stripHtml(match[2]!),
-        snippet: stripHtml(match[3]!),
-      });
-    }
-  };
-
-  // Helper for the lite version (simpler markup, table-based).
-  const parseLitePage = (html: string): void => {
-    const liteRe = /<a class="result-link" href="([^"]+)"[^>]*>([\s\S]*?)<\/a>[\s\S]*?<td class="result-snippet"[^>]*>([\s\S]*?)<\/td>/g;
-    let m: RegExpExecArray | null;
-    while ((m = liteRe.exec(html)) !== null && hits.length < limit) {
-      const target = m[1]!;
-      hits.push({
-        url: target,
-        title: stripHtml(m[2]!),
-        snippet: stripHtml(m[3]!),
-      });
-    }
-    // Fallback to a more permissive pattern if the structured one missed.
-    if (hits.length === 0) {
-      const looseRe = /<a[^>]+href="(https?:\/\/[^"]+)"[^>]*>([^<]{6,})<\/a>/g;
-      let mm: RegExpExecArray | null;
-      const seen = new Set<string>();
-      while ((mm = looseRe.exec(html)) !== null && hits.length < limit) {
-        const u = mm[1]!;
-        if (seen.has(u)) continue;
-        seen.add(u);
-        if (/duckduckgo\.com/.test(u)) continue;
-        hits.push({ url: u, title: stripHtml(mm[2]!), snippet: '' });
-      }
-    }
-  };
-
-  try {
-    const res = await fetch(
-      `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`,
-      { headers },
-    );
-    if (res.ok) parseHtmlPage(await res.text());
-  } catch {
-    // ignore — try next endpoint
-  }
-
-  if (hits.length === 0) {
-    try {
-      const res = await fetch(
-        `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(query)}`,
-        { headers },
-      );
-      if (res.ok) parseLitePage(await res.text());
-    } catch {
-      // ignore
-    }
-  }
-
-  if (hits.length === 0) {
-    // Instant-answer JSON API — limited but reliable. Returns abstract + topic
-    // results for many queries.
-    try {
-      const res = await fetch(
-        `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`,
-        { headers: { 'User-Agent': UA_DESKTOP, Accept: 'application/json' } },
-      );
-      if (res.ok) {
-        const data = (await res.json()) as {
-          AbstractText?: string;
-          AbstractURL?: string;
-          Heading?: string;
-          RelatedTopics?: Array<{ Text?: string; FirstURL?: string }>;
-        };
-        if (data.AbstractText && data.AbstractURL) {
-          hits.push({
-            url: data.AbstractURL,
-            title: data.Heading ?? query,
-            snippet: data.AbstractText,
-          });
-        }
-        for (const t of data.RelatedTopics ?? []) {
-          if (hits.length >= limit) break;
-          if (t.FirstURL && t.Text) {
-            hits.push({ url: t.FirstURL, title: t.Text.slice(0, 80), snippet: t.Text });
-          }
-        }
-      }
-    } catch {
-      // ignore
-    }
-  }
-
-  // Wikipedia full-text fallback. Always reachable, returns at least an
-  // abstract for almost any query — good safety net when DDG is throttled.
-  if (hits.length === 0) {
-    try {
-      const res = await fetch(
-        `https://en.wikipedia.org/w/api.php?action=query&list=search&format=json&origin=*&srlimit=${limit}&srsearch=${encodeURIComponent(query)}`,
-        { headers: { 'User-Agent': UA_DESKTOP, Accept: 'application/json' } },
-      );
-      if (res.ok) {
-        const data = (await res.json()) as {
-          query?: { search?: Array<{ title: string; snippet: string; pageid: number }> };
-        };
-        for (const r of data.query?.search ?? []) {
-          if (hits.length >= limit) break;
-          hits.push({
-            url: `https://en.wikipedia.org/?curid=${r.pageid}`,
-            title: r.title,
-            snippet: stripHtml(r.snippet),
-          });
-        }
-      }
-    } catch {
-      // ignore
-    }
-  }
-
-  if (hits.length === 0) {
-    throw new Error(
-      `No search results for "${query}" across DuckDuckGo HTML/lite, DDG Instant Answer, and Wikipedia. Likely network blocked or the query is too narrow — try broader wording or a specific site (e.g. "OpenAI blog announcements").`,
-    );
-  }
-  return hits;
-}
-
-function stripHtml(s: string): string {
-  return s
-    .replace(/<[^>]+>/g, '')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&nbsp;/g, ' ')
-    .trim();
 }

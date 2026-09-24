@@ -32,6 +32,8 @@ import type {
   AgentsExportPackResponse,
   AgentsImportPackResponse,
   SystemStatsGetResponse,
+  ClisDetectResponse,
+  ClisGetResponse,
   ChatExportRunResponse,
   SnippetsListResponse,
   SnippetsSaveResponse,
@@ -453,6 +455,12 @@ const api = {
     stats: (): Promise<SystemStatsGetResponse> =>
       ipcRenderer.invoke(CHANNELS.SYSTEM_STATS_GET, {}),
   },
+  clis: {
+    detect: (): Promise<ClisDetectResponse> => ipcRenderer.invoke(CHANNELS.CLIS_DETECT, {}),
+    get: (): Promise<ClisGetResponse> => ipcRenderer.invoke(CHANNELS.CLIS_GET, {}),
+    connect: (ids: string[]): Promise<{ ok: true }> =>
+      ipcRenderer.invoke(CHANNELS.CLIS_CONNECT, { ids }),
+  },
   backup: {
     export: (): Promise<BackupExportResponse> => ipcRenderer.invoke(CHANNELS.BACKUP_EXPORT, {}),
     import: (): Promise<BackupImportResponse> => ipcRenderer.invoke(CHANNELS.BACKUP_IMPORT, {}),
@@ -593,31 +601,11 @@ const api = {
     testTranscriber: () => ipcRenderer.invoke(CHANNELS.CAPTURE_TEST_TRANSCRIBER, {}),
   },
   business: {
-    getProfile: () => ipcRenderer.invoke(CHANNELS.BUSINESS_GET_PROFILE, {}),
-    saveProfile: (profile: {
-      name: string;
-      product: string;
-      audience: string;
-      goals: string[];
-      links?: { site?: string; repo?: string };
-      schedule: { enabled: boolean; time: string };
-    }) => ipcRenderer.invoke(CHANNELS.BUSINESS_SAVE_PROFILE, profile),
-    runSprint: () => ipcRenderer.invoke(CHANNELS.BUSINESS_RUN_SPRINT, {}),
-    sprints: () => ipcRenderer.invoke(CHANNELS.BUSINESS_SPRINTS, {}),
-    actions: () => ipcRenderer.invoke(CHANNELS.BUSINESS_ACTIONS, {}),
-    approve: (actionId: string) => ipcRenderer.invoke(CHANNELS.BUSINESS_APPROVE, { actionId }),
-    reject: (actionId: string) => ipcRenderer.invoke(CHANNELS.BUSINESS_REJECT, { actionId }),
-    feed: (limit?: number) =>
-      ipcRenderer.invoke(CHANNELS.BUSINESS_FEED, limit ? { limit } : {}),
-    subscribeFeed: (
-      cb: (event: import('@shared/ipc-channels').BusinessFeedEventDto) => void,
-    ): (() => void) => {
-      const handler = (
-        _e: Electron.IpcRendererEvent,
-        payload: import('@shared/ipc-channels').BusinessFeedEventDto,
-      ): void => cb(payload);
-      ipcRenderer.on(CHANNELS.BUSINESS_FEED_EVENT, handler);
-      return () => ipcRenderer.removeListener(CHANNELS.BUSINESS_FEED_EVENT, handler);
+    rpc: (method: string, params?: unknown) => ipcRenderer.invoke(CHANNELS.BUSINESS_RPC, { method, params: params ?? {} }),
+    subscribe: (cb: (event: import('@shared/business/api').BizEvent) => void): (() => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, payload: import('@shared/business/api').BizEvent): void => cb(payload);
+      ipcRenderer.on(CHANNELS.BUSINESS_EVENT, handler);
+      return () => ipcRenderer.removeListener(CHANNELS.BUSINESS_EVENT, handler);
     },
   },
   stocks: {
@@ -634,6 +622,24 @@ const api = {
     getWatchlist: () => ipcRenderer.invoke(CHANNELS.STOCKS_WATCHLIST_GET, {}),
     setWatchlist: (symbols: string[]) =>
       ipcRenderer.invoke(CHANNELS.STOCKS_WATCHLIST_SET, { symbols }),
+  },
+  trading: {
+    status: () => ipcRenderer.invoke(CHANNELS.TRADING_STATUS, {}),
+    connect: (keyId: string, secret: string, paper: boolean) =>
+      ipcRenderer.invoke(CHANNELS.TRADING_CONNECT, { keyId, secret, paper }),
+    disconnect: () => ipcRenderer.invoke(CHANNELS.TRADING_DISCONNECT, {}),
+    setLiveAck: (ack: boolean) => ipcRenderer.invoke(CHANNELS.TRADING_LIVE_ACK, { ack }),
+    account: () => ipcRenderer.invoke(CHANNELS.TRADING_ACCOUNT, {}),
+    setGuardrails: (patch: Record<string, number>) =>
+      ipcRenderer.invoke(CHANNELS.TRADING_GUARDRAILS_SET, patch),
+    setAutopilot: (enabled: boolean) =>
+      ipcRenderer.invoke(CHANNELS.TRADING_AUTOPILOT, { enabled }),
+    runCycle: () => ipcRenderer.invoke(CHANNELS.TRADING_RUN_CYCLE, {}),
+    trades: (limit?: number) =>
+      ipcRenderer.invoke(CHANNELS.TRADING_TRADES, limit ? { limit } : {}),
+    strategies: () => ipcRenderer.invoke(CHANNELS.TRADING_STRATEGIES, {}),
+    setStrategyStatus: (id: string, status: 'active' | 'retired') =>
+      ipcRenderer.invoke(CHANNELS.TRADING_STRATEGY_STATUS, { id, status }),
   },
 };
 
