@@ -165,58 +165,63 @@ export const STOCK_CHART_TOOL_SPEC: ToolSpec = {
   },
 };
 
-/** Autonomous-trading tools. Every order passes the shared risk guardrails in
- *  the main process — the model can propose trades but can never bypass the
- *  position-size / daily-loss / cooldown rules. Paper trading by default. */
+/** AI Trader tools. Agents can read state and PROPOSE trades; proposals enter
+ *  the same deterministic pipeline as model signals (schema → risk engine →
+ *  OMS) and never reach the broker directly. Paper trading by default. */
 export const TRADING_TOOL_SPECS: ToolSpec[] = [
   {
     name: 'trading_account',
     description:
-      'Get the connected Alpaca trading account: mode (paper/live), equity, cash, open positions with P&L, today\'s realized P&L and loss streak, and the active risk guardrails. Call this before proposing any trade.',
+      "Get the AI Trader's state: mode (paper/live), autopilot, kill switch and circuit breaker, active models, equity, cash, today's P&L, drawdown, open positions with stops/targets, and the risk limits. Call this before proposing any trade.",
     parameters: { type: 'object', properties: {} },
   },
   {
-    name: 'place_trade',
+    name: 'propose_trade',
     description:
-      'Propose a trade on the connected Alpaca account. It is submitted as a bracket order (market entry + stoploss + take-profit, atomic) ONLY if it passes the risk guardrails (max position %, risk % per trade, daily loss halt, open-position cap, loss-streak cooldown, confidence floor). Returns the verdict either way — read the blocked reasons, they encode the account rules. Use stock_data first; never invent prices.',
+      'Propose a trade to the AI Trader. It is NOT sent to the broker by you: the deterministic risk engine validates the numbers, sizes it (fixed-fractional, ATR stops, exposure/sector/correlation/liquidity caps, daily loss breaker) or rejects it with reasons, and the OMS executes it only when the autopilot is on — otherwise it waits in Signals for the user. Use stock_data first; never invent prices.',
     parameters: {
       type: 'object',
       properties: {
         symbol: { type: 'string', description: 'US equity/ETF ticker, e.g. AAPL.' },
-        side: { type: 'string', enum: ['buy', 'sell'], description: 'buy = long. sell (short) only with a strong, stated reason.' },
+        side: { type: 'string', enum: ['buy', 'sell'], description: 'buy = long. sell = short (only if shorting is enabled in the risk config).' },
         entry: { type: 'number', description: 'Current/intended entry price from stock_data.' },
-        stoploss: { type: 'number', description: 'Stoploss price (below entry for long).' },
-        takeProfit: { type: 'number', description: 'Take-profit limit price.' },
-        qty: { type: 'number', description: 'Optional share count; omitted → sized from the risk % guardrail. May be clamped down.' },
-        confidence: { type: 'number', description: 'Your 0..1 confidence. Trades under the guardrail floor are rejected.' },
-        reason: { type: 'string', description: 'One-paragraph rationale — stored in the trade journal for the post-mortem loop.' },
-        strategyId: { type: 'string', description: 'Optional id from list_strategies so results update that strategy\'s stats.' },
+        stoploss: { type: 'number', description: 'Stop price (below entry for a long).' },
+        takeProfit: { type: 'number', description: 'Take-profit price.' },
+        qty: { type: 'number', description: 'Optional share count; the risk engine can only shrink it.' },
+        confidence: { type: 'number', description: 'Your 0..1 confidence. Below the configured threshold is rejected.' },
+        reason: { type: 'string', description: 'One-paragraph rationale — stored with the signal and in the audit trail.' },
+        strategyId: { type: 'string', description: 'Optional id from list_strategies.' },
       },
       required: ['symbol', 'side', 'entry', 'stoploss', 'takeProfit', 'confidence', 'reason'],
     },
   },
   {
     name: 'close_trade',
-    description: 'Close an open position at market (cancels its bracket legs) and journal the exit with your reason.',
+    description: 'Close an open position at market through the OMS (cancels its protective orders) and record your reason.',
     parameters: {
       type: 'object',
       properties: {
         symbol: { type: 'string' },
-        reason: { type: 'string', description: 'Why you are closing — stored in the journal.' },
+        reason: { type: 'string', description: 'Why you are closing.' },
       },
       required: ['symbol', 'reason'],
     },
   },
   {
+    name: 'trader_signals',
+    description: "List the AI Trader's recent model signals: confidence, expected edge, status (approved/rejected with the risk engine's reason), rationale and model version.",
+    parameters: { type: 'object', properties: { limit: { type: 'number', description: 'Max signals, default 30.' } } },
+  },
+  {
     name: 'list_strategies',
     description:
-      'List the trading strategy library: params, inspiration (which successful traders/principles each encodes), win/loss record, total P&L, distilled lessons, and active/retired status.',
+      'List the strategy composer: each strategy filters model signals (timeframes, min confidence, sides, regimes, feature filters) and sets ATR stop/target multiples and max holding bars; with win/loss record, P&L, lessons and status.',
     parameters: { type: 'object', properties: {} },
   },
   {
     name: 'save_strategy',
     description:
-      'Create a new trading strategy from your research into successful traders. Cite the traders/principles in `inspiration`. The autopilot will trade active strategies and retire them automatically if they prove negative expectancy.',
+      'Create a strategy for the composer. Cite the traders/principles in `inspiration`. Strategies with proven negative expectancy retire automatically.',
     parameters: {
       type: 'object',
       properties: {
@@ -226,7 +231,7 @@ export const TRADING_TOOL_SPECS: ToolSpec[] = [
         params: {
           type: 'object',
           description:
-            'Machine rules: { minConfidence: 0..0.95, requireTrend: "up"|"down"|"any", minFactorScores: {trend|momentum|volatility|levels|volume|pattern: -1..1}, takeProfitR: 0.5..10, stopAtrMult: 0.5..5 }',
+            'Rules: { timeframes?: ["5m"|"15m"|"1h"|"1d"], minConfidence?: 0.5..0.99, sides?: ["long"|"short"], regimes?: ["trend_up"|"trend_down"|"range"|"high_vol"|"normal_vol"|"low_vol"], featureFilters?: [{ feature: "rsi_14"|"roc_15"|"vol_z"|"bb_pctb"|…, op: ">"|">="|"<"|"<=", value }], stopAtrMult?: 0.3..10, takeProfitAtrMult?: 0.3..20, maxHoldBars?: int }',
         },
       },
       required: ['name', 'description', 'inspiration', 'params'],
@@ -235,14 +240,13 @@ export const TRADING_TOOL_SPECS: ToolSpec[] = [
   {
     name: 'trade_journal',
     description:
-      'Read the trade journal: recent trades with entry rationale, outcome, P&L, and the post-mortem review of every loss, plus the distilled lessons list. ALWAYS consult this before creating strategies or placing trades — do not repeat recorded mistakes.',
+      'Read the trade ledger: recent trades with outcome, P&L, exit reason, model version and the post-mortem of every loss, plus distilled lessons. Consult it before proposing trades — do not repeat recorded mistakes.',
     parameters: {
       type: 'object',
       properties: { limit: { type: 'number', description: 'Max trades, default 25.' } },
     },
   },
 ];
-
 export const DESIGN_TOOL_SPECS: ToolSpec[] = [
   {
     name: 'design_artifact',

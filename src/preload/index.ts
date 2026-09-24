@@ -623,23 +623,13 @@ const api = {
     setWatchlist: (symbols: string[]) =>
       ipcRenderer.invoke(CHANNELS.STOCKS_WATCHLIST_SET, { symbols }),
   },
-  trading: {
-    status: () => ipcRenderer.invoke(CHANNELS.TRADING_STATUS, {}),
-    connect: (keyId: string, secret: string, paper: boolean) =>
-      ipcRenderer.invoke(CHANNELS.TRADING_CONNECT, { keyId, secret, paper }),
-    disconnect: () => ipcRenderer.invoke(CHANNELS.TRADING_DISCONNECT, {}),
-    setLiveAck: (ack: boolean) => ipcRenderer.invoke(CHANNELS.TRADING_LIVE_ACK, { ack }),
-    account: () => ipcRenderer.invoke(CHANNELS.TRADING_ACCOUNT, {}),
-    setGuardrails: (patch: Record<string, number>) =>
-      ipcRenderer.invoke(CHANNELS.TRADING_GUARDRAILS_SET, patch),
-    setAutopilot: (enabled: boolean) =>
-      ipcRenderer.invoke(CHANNELS.TRADING_AUTOPILOT, { enabled }),
-    runCycle: () => ipcRenderer.invoke(CHANNELS.TRADING_RUN_CYCLE, {}),
-    trades: (limit?: number) =>
-      ipcRenderer.invoke(CHANNELS.TRADING_TRADES, limit ? { limit } : {}),
-    strategies: () => ipcRenderer.invoke(CHANNELS.TRADING_STRATEGIES, {}),
-    setStrategyStatus: (id: string, status: 'active' | 'retired') =>
-      ipcRenderer.invoke(CHANNELS.TRADING_STRATEGY_STATUS, { id, status }),
+  trader: {
+    rpc: (method: string, params?: unknown) => ipcRenderer.invoke(CHANNELS.TRADER_RPC, { method, params: params ?? {} }),
+    subscribe: (cb: (event: import('@shared/trader/api').TraderEvent) => void): (() => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, payload: import('@shared/trader/api').TraderEvent): void => cb(payload);
+      ipcRenderer.on(CHANNELS.TRADER_EVENT, handler);
+      return () => ipcRenderer.removeListener(CHANNELS.TRADER_EVENT, handler);
+    },
   },
 };
 
