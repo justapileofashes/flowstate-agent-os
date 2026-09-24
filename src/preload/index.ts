@@ -601,31 +601,11 @@ const api = {
     testTranscriber: () => ipcRenderer.invoke(CHANNELS.CAPTURE_TEST_TRANSCRIBER, {}),
   },
   business: {
-    getProfile: () => ipcRenderer.invoke(CHANNELS.BUSINESS_GET_PROFILE, {}),
-    saveProfile: (profile: {
-      name: string;
-      product: string;
-      audience: string;
-      goals: string[];
-      links?: { site?: string; repo?: string };
-      schedule: { enabled: boolean; time: string };
-    }) => ipcRenderer.invoke(CHANNELS.BUSINESS_SAVE_PROFILE, profile),
-    runSprint: () => ipcRenderer.invoke(CHANNELS.BUSINESS_RUN_SPRINT, {}),
-    sprints: () => ipcRenderer.invoke(CHANNELS.BUSINESS_SPRINTS, {}),
-    actions: () => ipcRenderer.invoke(CHANNELS.BUSINESS_ACTIONS, {}),
-    approve: (actionId: string) => ipcRenderer.invoke(CHANNELS.BUSINESS_APPROVE, { actionId }),
-    reject: (actionId: string) => ipcRenderer.invoke(CHANNELS.BUSINESS_REJECT, { actionId }),
-    feed: (limit?: number) =>
-      ipcRenderer.invoke(CHANNELS.BUSINESS_FEED, limit ? { limit } : {}),
-    subscribeFeed: (
-      cb: (event: import('@shared/ipc-channels').BusinessFeedEventDto) => void,
-    ): (() => void) => {
-      const handler = (
-        _e: Electron.IpcRendererEvent,
-        payload: import('@shared/ipc-channels').BusinessFeedEventDto,
-      ): void => cb(payload);
-      ipcRenderer.on(CHANNELS.BUSINESS_FEED_EVENT, handler);
-      return () => ipcRenderer.removeListener(CHANNELS.BUSINESS_FEED_EVENT, handler);
+    rpc: (method: string, params?: unknown) => ipcRenderer.invoke(CHANNELS.BUSINESS_RPC, { method, params: params ?? {} }),
+    subscribe: (cb: (event: import('@shared/business/api').BizEvent) => void): (() => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, payload: import('@shared/business/api').BizEvent): void => cb(payload);
+      ipcRenderer.on(CHANNELS.BUSINESS_EVENT, handler);
+      return () => ipcRenderer.removeListener(CHANNELS.BUSINESS_EVENT, handler);
     },
   },
   stocks: {

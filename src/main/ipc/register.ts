@@ -87,15 +87,10 @@ export function registerIpcHandlers(deps: {
   registerZoomHandlers({ settings: deps.settings, repo: deps.repo });
   registerCaptureHandlers({ settings: deps.settings, repo: deps.repo });
   registerBusinessHandlers({
+    db: deps.db,
     settings: deps.settings,
-    repo: deps.repo,
     provider: deps.provider,
-    approvalGate: deps.approvalGate,
-    workspacesDir: deps.workspacesDir,
     mcpManager: deps.mcpManager,
-    brain: deps.brain,
-    audit: deps.audit,
-    snapshots: deps.snapshots,
   });
   registerBrainHandlers({ brain: deps.brain, settings: deps.settings });
   registerSnapshotsHandlers({ service: deps.snapshots, repo: deps.repo, audit: deps.audit });

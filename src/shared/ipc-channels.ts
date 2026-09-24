@@ -54,15 +54,9 @@ export const CHANNELS = {
   CAPTURE_JOBS: 'capture:jobs',
   CAPTURE_SAVE_TRANSCRIBER: 'capture:save-transcriber',
   CAPTURE_TEST_TRANSCRIBER: 'capture:test-transcriber',
-  BUSINESS_GET_PROFILE: 'business:get-profile',
-  BUSINESS_SAVE_PROFILE: 'business:save-profile',
-  BUSINESS_RUN_SPRINT: 'business:run-sprint',
-  BUSINESS_SPRINTS: 'business:sprints',
-  BUSINESS_ACTIONS: 'business:actions',
-  BUSINESS_APPROVE: 'business:approve',
-  BUSINESS_REJECT: 'business:reject',
-  BUSINESS_FEED: 'business:feed',
-  BUSINESS_FEED_EVENT: 'business:feed-event', // broadcast main → renderer
+  // Business agent: one typed RPC channel (schemas in @shared/business/api).
+  BUSINESS_RPC: 'business:rpc',
+  BUSINESS_EVENT: 'business:event', // broadcast main → renderer
   AGENTS_AUTO_ASSIGN_MODELS: 'agents:auto-assign-models',
   BRAIN_STATUS: 'brain:status',
   BRAIN_LIST: 'brain:list',
@@ -734,27 +728,6 @@ export const schemas = {
     apiKey: z.string().trim().max(500).optional(),
     model: z.string().trim().max(120).optional(),
     command: z.string().trim().max(1000).optional(),
-  }),
-
-  businessSaveProfileRequest: z.object({
-    name: z.string().trim().min(1).max(120),
-    product: z.string().trim().min(1).max(500),
-    audience: z.string().trim().min(1).max(500),
-    goals: z.array(z.string().trim().min(1).max(300)).min(1).max(10),
-    links: z
-      .object({
-        site: z.string().trim().max(300).optional(),
-        repo: z.string().trim().max(300).optional(),
-      })
-      .optional(),
-    schedule: z.object({
-      enabled: z.boolean(),
-      time: z.string().regex(/^\d{2}:\d{2}$/),
-    }),
-  }),
-  businessActionIdRequest: z.object({ actionId: z.string().min(1) }),
-  businessFeedRequest: z.object({
-    limit: z.number().int().positive().max(500).optional(),
   }),
 
   agentsAutoAssignRequest: z.object({}),
@@ -1693,94 +1666,6 @@ export interface CaptureStartResponse {
 }
 export interface CaptureJobsResponse {
   jobs: CaptureJobDto[];
-}
-
-// ── Business autopilot ───────────────────────────────────────────────────────
-
-export interface BusinessProfileDto {
-  name: string;
-  product: string;
-  audience: string;
-  goals: string[];
-  links: { site?: string; repo?: string };
-  roleAgentIds: { strategy: string; marketing: string; ops: string };
-  schedule: { enabled: boolean; time: string };
-  createdAt: number;
-}
-
-export interface BusinessSprintTaskDto {
-  id: string;
-  role: 'marketing' | 'ops';
-  instruction: string;
-  status: 'pending' | 'running' | 'done' | 'error';
-  output?: string;
-  error?: string;
-}
-
-export interface BusinessSprintDto {
-  id: string;
-  status: 'planning' | 'running' | 'wrapping' | 'done' | 'error';
-  goals: string[];
-  tasks: BusinessSprintTaskDto[];
-  briefing?: string;
-  error?: string;
-  startedAt: number;
-  finishedAt?: number;
-}
-
-export interface ProposedActionDto {
-  id: string;
-  sprintId: string;
-  role: 'strategy' | 'marketing' | 'ops';
-  kind: 'email' | 'post' | 'code' | 'other';
-  title: string;
-  body: string;
-  status: 'proposed' | 'approved' | 'executing' | 'done' | 'failed' | 'rejected';
-  result?: string;
-  createdAt: number;
-  updatedAt: number;
-}
-
-export interface BusinessFeedEventDto {
-  id: string;
-  ts: number;
-  sprintId?: string;
-  role?: string;
-  kind:
-    | 'sprint-start'
-    | 'phase'
-    | 'task-start'
-    | 'task-tool'
-    | 'task-done'
-    | 'action-proposed'
-    | 'action-executed'
-    | 'action-failed'
-    | 'briefing'
-    | 'sprint-end'
-    | 'error';
-  text: string;
-}
-
-export type BusinessSaveProfileRequest = z.infer<typeof schemas.businessSaveProfileRequest>;
-export interface BusinessGetProfileResponse {
-  profile: BusinessProfileDto | null;
-}
-export interface BusinessSaveProfileResponse {
-  ok: boolean;
-  profile: BusinessProfileDto;
-}
-export interface BusinessRunSprintResponse {
-  sprintId?: string;
-  error?: string;
-}
-export interface BusinessSprintsResponse {
-  sprints: BusinessSprintDto[];
-}
-export interface BusinessActionsResponse {
-  actions: ProposedActionDto[];
-}
-export interface BusinessFeedResponse {
-  events: BusinessFeedEventDto[];
 }
 
 export interface AgentAutoAssignMatchDto {

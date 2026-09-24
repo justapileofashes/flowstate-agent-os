@@ -392,26 +392,12 @@ interface FlowstateApi {
     testTranscriber: () => Promise<{ ok: boolean; error?: string }>;
   };
   business: {
-    getProfile: () => Promise<import('@shared/ipc-channels').BusinessGetProfileResponse>;
-    saveProfile: (profile: {
-      name: string;
-      product: string;
-      audience: string;
-      goals: string[];
-      links?: { site?: string; repo?: string };
-      schedule: { enabled: boolean; time: string };
-    }) => Promise<import('@shared/ipc-channels').BusinessSaveProfileResponse>;
-    runSprint: () => Promise<import('@shared/ipc-channels').BusinessRunSprintResponse>;
-    sprints: () => Promise<import('@shared/ipc-channels').BusinessSprintsResponse>;
-    actions: () => Promise<import('@shared/ipc-channels').BusinessActionsResponse>;
-    approve: (actionId: string) => Promise<{ ok: boolean; error?: string }>;
-    reject: (actionId: string) => Promise<{ ok: boolean; error?: string }>;
-    feed: (limit?: number) => Promise<import('@shared/ipc-channels').BusinessFeedResponse>;
-    subscribeFeed: (
-      cb: (event: import('@shared/ipc-channels').BusinessFeedEventDto) => void,
-    ) => () => void;
-  };
-  stocks: {
+    rpc: <M extends import('@shared/business/api').BizMethod>(
+      method: M,
+      params: import('@shared/business/api').BizRequest<M>,
+    ) => Promise<import('@shared/business/api').BizRpcResult<M>>;
+    subscribe: (cb: (event: import('@shared/business/api').BizEvent) => void) => () => void;
+  };  stocks: {
     quote: (symbol: string) => Promise<import('@shared/ipc-channels').StockQuoteResponse>;
     history: (
       symbol: string,
