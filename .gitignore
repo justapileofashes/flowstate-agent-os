@@ -33,6 +33,8 @@ supabase/.temp/
 skills/
 # ...but the business agent's skill modules are source code.
 !src/main/business/skills/
+# ...and so is the AI Trader's data pipeline (the data/ rule above matches it).
+!src/main/trader/data/
 skills-lock.json
 
 # Claude Code local workspace + machine-specific settings

@@ -22,7 +22,8 @@ import { sceneSchema, buildThreeViewer, buildOpenSCAD } from './model-3d';
 import { app } from 'electron';
 import { join } from 'node:path';
 import { MarketDataService } from '@main/services/market-data';
-import { getTradingService } from '@main/services/trading-service';
+import { getTraderService } from '@main/trader/service';
+import { strategyParamsSchema } from '@shared/trader/types';
 import { rsi, macd, atr, bollinger, sma, ema, swingLevels, trend } from '@shared/indicators';
 import { detectPatterns } from '@shared/patterns';
 import { forecastCone } from '@shared/forecast';
@@ -91,7 +92,7 @@ const argsSchemas = {
   generate_3d_model: sceneSchema,
   skill: z.object({ name: z.string().min(1).max(80) }),
   trading_account: z.object({}),
-  place_trade: z.object({
+  propose_trade: z.object({
     symbol: z.string().min(1).max(10),
     side: z.enum(['buy', 'sell']),
     entry: z.number().positive(),
@@ -114,6 +115,7 @@ const argsSchemas = {
     params: z.record(z.unknown()),
   }),
   trade_journal: z.object({ limit: z.number().int().positive().max(200).optional() }),
+  trader_signals: z.object({ limit: z.number().int().positive().max(200).optional() }),
 } as const;
 
 type ToolName = keyof typeof argsSchemas;
@@ -207,6 +209,8 @@ export class ToolDispatcher {
   }
 
   private async callInner(toolCallId: string, name: string, rawArgs: unknown): Promise<ToolResult> {
+    // Pre-2.0 prompts call place_trade; it now only proposes (same deterministic pipeline).
+    if (name === 'place_trade') return this.callInner(toolCallId, 'propose_trade', rawArgs);
     // MCP tools (mcp__<server>__<tool>) route through the manager.
     if (name.startsWith('mcp__')) {
       if (!this.deps.mcpManager) {
@@ -442,47 +446,36 @@ export class ToolDispatcher {
           }
         }
         case 'trading_account': {
-          const trading = getTradingService();
-          if (!trading) return failure(toolCallId, name, 'Trading not initialized');
-          if (!trading.isConfigured()) {
-            return failure(toolCallId, name, 'Trading not connected — the user must add Alpaca API keys on the Stocks screen');
-          }
+          const trader = getTraderService();
+          if (!trader) return failure(toolCallId, name, 'AI Trader not initialized');
           try {
-            const [status, account] = [trading.status(), await trading.account()];
-            return ok(
-              toolCallId,
-              name,
-              JSON.stringify({
-                mode: status.paper ? 'paper' : 'live',
-                autopilot: status.autopilot,
-                guardrails: status.guardrails,
-                dayStats: trading.dayStats(),
-                account,
-              }),
-            );
+            return ok(toolCallId, name, JSON.stringify(await trader.summary()));
           } catch (err) {
             return failure(toolCallId, name, err instanceof Error ? err.message : String(err));
           }
         }
-        case 'place_trade': {
-          const trading = getTradingService();
-          if (!trading) return failure(toolCallId, name, 'Trading not initialized');
-          if (!trading.isConfigured()) {
-            return failure(toolCallId, name, 'Trading not connected — the user must add Alpaca API keys on the Stocks screen');
-          }
-          const a = parsed.data as z.infer<typeof argsSchemas.place_trade>;
+        case 'propose_trade': {
+          const trader = getTraderService();
+          if (!trader) return failure(toolCallId, name, 'AI Trader not initialized');
+          const a = parsed.data as z.infer<typeof argsSchemas.propose_trade>;
           try {
-            const { verdict, trade } = await trading.placeTrade(a);
+            const res = await trader.proposeFromAgent({
+              symbol: a.symbol.toUpperCase(),
+              side: a.side === 'sell' ? 'short' : 'long',
+              entry: a.entry,
+              stop: a.stoploss,
+              takeProfit: a.takeProfit,
+              confidence: a.confidence,
+              reason: a.reason,
+              ...(a.qty ? { qty: a.qty } : {}),
+              ...(a.strategyId ? { strategyId: a.strategyId } : {}),
+            });
             return ok(
               toolCallId,
               name,
               JSON.stringify({
-                placed: verdict.allowed,
-                qty: verdict.qty,
-                notional: verdict.notional,
-                blocked: verdict.blocked,
-                notes: verdict.reasons,
-                ...(trade ? { tradeId: trade.id } : {}),
+                ...res,
+                note: 'Proposals never reach the broker directly: the risk engine sizes or rejects them, and they execute only when the autopilot is on (or the user clicks Execute).',
               }),
             );
           } catch (err) {
@@ -490,62 +483,89 @@ export class ToolDispatcher {
           }
         }
         case 'close_trade': {
-          const trading = getTradingService();
-          if (!trading || !trading.isConfigured()) {
-            return failure(toolCallId, name, 'Trading not connected');
-          }
+          const trader = getTraderService();
+          if (!trader) return failure(toolCallId, name, 'AI Trader not initialized');
           const a = parsed.data as z.infer<typeof argsSchemas.close_trade>;
           try {
-            const res = await trading.closeBySymbol(a.symbol, a.reason);
-            return res.ok
-              ? ok(toolCallId, name, JSON.stringify(res))
-              : failure(toolCallId, name, res.detail);
+            const res = await trader.handle('positions.close', { symbol: a.symbol.toUpperCase() }, 'agent');
+            return res.ok ? ok(toolCallId, name, JSON.stringify({ ok: true, order: res.order, reason: a.reason })) : failure(toolCallId, name, res.error ?? 'close failed');
           } catch (err) {
             return failure(toolCallId, name, err instanceof Error ? err.message : String(err));
           }
         }
         case 'list_strategies': {
-          const trading = getTradingService();
-          if (!trading) return failure(toolCallId, name, 'Trading not initialized');
-          return ok(toolCallId, name, JSON.stringify({ strategies: trading.strategies() }));
+          const trader = getTraderService();
+          if (!trader) return failure(toolCallId, name, 'AI Trader not initialized');
+          return ok(toolCallId, name, JSON.stringify({ strategies: trader.db.runs.strategies() }));
         }
         case 'save_strategy': {
-          const trading = getTradingService();
-          if (!trading) return failure(toolCallId, name, 'Trading not initialized');
+          const trader = getTraderService();
+          if (!trader) return failure(toolCallId, name, 'AI Trader not initialized');
           const a = parsed.data as z.infer<typeof argsSchemas.save_strategy>;
-          const s = trading.createStrategy(a);
-          return ok(
-            toolCallId,
-            name,
-            JSON.stringify({ ok: true, id: s.id, name: s.name, params: s.params, status: s.status }),
-          );
+          const params = strategyParamsSchema.safeParse(a.params);
+          if (!params.success) {
+            return failure(
+              toolCallId,
+              name,
+              `invalid params: ${params.error.errors.map((e) => `${e.path.join('.')}: ${e.message}`).join('; ')}. Expected { timeframes?: ("5m"|"15m"|"1h"|"1d")[], minConfidence?: 0.5..0.99, sides?: ("long"|"short")[], regimes?: ("trend_up"|"trend_down"|"range"|"high_vol"|"normal_vol"|"low_vol")[], featureFilters?: [{feature, op: ">"|">="|"<"|"<=", value}], stopAtrMult?, takeProfitAtrMult?, maxHoldBars? }`,
+            );
+          }
+          const res = await trader.handle('strategies.save', { name: a.name, description: a.description, inspiration: a.inspiration, params: params.data }, 'agent');
+          return ok(toolCallId, name, JSON.stringify({ ok: true, strategy: res.strategy }));
         }
         case 'trade_journal': {
-          const trading = getTradingService();
-          if (!trading) return failure(toolCallId, name, 'Trading not initialized');
+          const trader = getTraderService();
+          if (!trader) return failure(toolCallId, name, 'AI Trader not initialized');
           const a = parsed.data as z.infer<typeof argsSchemas.trade_journal>;
-          const trades = trading.trades(a.limit ?? 25).map((t) => ({
-            symbol: t.symbol,
-            side: t.side,
-            qty: t.qty,
-            entry: t.entryPrice,
-            stoploss: t.stoploss,
-            takeProfit: t.takeProfit,
-            exit: t.exitPrice,
-            status: t.status,
-            outcome: t.outcome,
-            pnl: t.pnl,
-            review: t.review,
-            openedAt: new Date(t.openedAt).toISOString(),
-            rationale: t.rationale.slice(0, 1000),
-          }));
+          const res = await trader.handle('trades.list', { limit: a.limit ?? 25 });
           return ok(
             toolCallId,
             name,
-            JSON.stringify({ trades, lessons: trading.recentLessons(10) }),
+            JSON.stringify({
+              trades: res.trades.map((t) => ({
+                symbol: t.symbol,
+                side: t.side,
+                account: t.account,
+                qty: t.qty,
+                entry: t.entryPrice,
+                exit: t.exitPrice,
+                stop: t.stop,
+                takeProfit: t.takeProfit,
+                status: t.status,
+                outcome: t.outcome,
+                pnl: t.pnl,
+                exitReason: t.exitReason,
+                model: t.modelVersion,
+                review: t.review,
+                openedAt: new Date(t.openedAt).toISOString(),
+              })),
+              lessons: res.lessons,
+            }),
           );
         }
-        case 'generate_3d_model': {
+        case 'trader_signals': {
+          const trader = getTraderService();
+          if (!trader) return failure(toolCallId, name, 'AI Trader not initialized');
+          const a = parsed.data as z.infer<typeof argsSchemas.trader_signals>;
+          const res = await trader.handle('signals.list', { since: 'week', limit: a.limit ?? 30 });
+          return ok(
+            toolCallId,
+            name,
+            JSON.stringify(
+              res.signals.map((s) => ({
+                symbol: s.symbol,
+                side: s.side,
+                confidence: s.confidence,
+                edgePct: s.edgePct,
+                status: s.status,
+                reason: s.reason,
+                rationale: s.rationale,
+                model: s.modelVersion,
+                at: new Date(s.createdAt).toISOString(),
+              })),
+            ),
+          );
+        }        case 'generate_3d_model': {
           const scene = parsed.data as z.infer<typeof argsSchemas.generate_3d_model>;
           const safeName = (scene.name || 'model').replace(/[^a-z0-9-_]+/gi, '_').slice(0, 60) || 'model';
           const html = buildThreeViewer(scene);

@@ -8,7 +8,7 @@
 // Free tier: chrome renders behind a locked overlay; no IPC is called.
 import { useEffect, useRef, useState, type JSX } from 'react';
 import { ipc } from '../lib/ipc';
-import { TradingPanel } from './TradingPanel';
+import { AiTrader } from './trader/AiTrader';
 import type {
   StockAnalysisResponse,
   StockQuoteResponse,
@@ -707,12 +707,12 @@ export function Stocks(): JSX.Element {
           className={view === 'autopilot' ? 'btn btn-sm btn-primary' : 'btn btn-sm btn-ghost'}
           onClick={() => setView('autopilot')}
         >
-          Autopilot
+          AI Trader
         </button>
       </div>
       {view === 'autopilot' ? (
-        <div style={{ flex: 1, minHeight: 0 }}>
-          <TradingPanel />
+        <div className="tr-host">
+          <AiTrader />
         </div>
       ) : (
       <div className="stk-body">

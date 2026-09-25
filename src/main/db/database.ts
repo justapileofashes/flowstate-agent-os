@@ -7,6 +7,7 @@ import migration005 from './migrations/005_license.sql?raw';
 import migration006 from './migrations/006_audit_log.sql?raw';
 import migration007 from './migrations/007_trading.sql?raw';
 import migration008 from './migrations/008_business_agent.sql?raw';
+import migration009 from './migrations/009_ai_trader.sql?raw';
 
 interface Migration {
   version: number;
@@ -22,6 +23,7 @@ const MIGRATIONS: Migration[] = [
   { version: 6, sql: migration006 },
   { version: 7, sql: migration007 },
   { version: 8, sql: migration008 },
+  { version: 9, sql: migration009 },
 ];
 
 const HELPER_PLACEHOLDER = '__WORKSPACE_PLACEHOLDER__';
