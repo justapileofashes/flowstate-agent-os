@@ -92,7 +92,12 @@ import type {
   ChatTeamNudgeResponse,
   TeamEventDto,
 } from '@shared/ipc-channels';
-import type { UsageSummaryResponse, BackupExportResponse, BackupImportResponse } from '@shared/ipc-channels';
+import type {
+  UsageSummaryResponse,
+  BackupExportResponse,
+  BackupImportResponse,
+  GlobalApprovalRequest,
+} from '@shared/ipc-channels';
 import type {
   FlowclawRunTaskResponse,
   FlowclawSkillsListResponse,
@@ -328,6 +333,20 @@ const api = {
         cb(payload);
       ipcRenderer.on(CHANNELS.PLUGINS_STATUS, handler);
       return () => ipcRenderer.removeListener(CHANNELS.PLUGINS_STATUS, handler);
+    },
+  },
+  approvals: {
+    /** Tool approvals from any run, including background ones no chat view watches. */
+    onRequest: (cb: (payload: GlobalApprovalRequest) => void): (() => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, payload: GlobalApprovalRequest): void => cb(payload);
+      ipcRenderer.on(CHANNELS.APPROVAL_REQUEST, handler);
+      return () => ipcRenderer.removeListener(CHANNELS.APPROVAL_REQUEST, handler);
+    },
+    onResolved: (cb: (payload: { streamId: string; toolCallId: string }) => void): (() => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, payload: { streamId: string; toolCallId: string }): void =>
+        cb(payload);
+      ipcRenderer.on(CHANNELS.APPROVAL_RESOLVED, handler);
+      return () => ipcRenderer.removeListener(CHANNELS.APPROVAL_RESOLVED, handler);
     },
   },
   terminal: {

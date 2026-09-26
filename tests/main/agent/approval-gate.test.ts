@@ -1,5 +1,28 @@
 import { describe, it, expect } from 'vitest';
 import { ApprovalGate } from '@main/agent/approval-gate';
+import { CHANNELS } from '@shared/ipc-channels';
+
+describe('ApprovalGate — background runs', () => {
+  it('also broadcasts requests + resolutions on the global approval channels', async () => {
+    const events: Array<{ channel: string; payload: unknown }> = [];
+    const gate = new ApprovalGate((channel, payload) => events.push({ channel, payload }), 1000);
+    const p = gate.require({
+      streamId: 'team:t1',
+      chatId: 'team:t1',
+      agent: { id: 'a1', approvalPolicy: 'cautious', toolPerms: { shell_enabled: true, delete_enabled: true } },
+      toolCallId: 'c1',
+      toolName: 'run_shell',
+      args: { command: 'ls' },
+      cwd: '/w',
+      isOverwrite: false,
+    });
+    const req = events.find((e) => e.channel === CHANNELS.APPROVAL_REQUEST);
+    expect(req?.payload).toMatchObject({ streamId: 'team:t1', toolCallId: 'c1', agentId: 'a1', toolName: 'run_shell' });
+    expect(gate.resolve('team:t1', 'c1', 'allow-once')).toBe(true);
+    await expect(p).resolves.toBe('allow');
+    expect(events.some((e) => e.channel === CHANNELS.APPROVAL_RESOLVED)).toBe(true);
+  });
+});
 
 const fakeAgent = {
   id: 'a1',

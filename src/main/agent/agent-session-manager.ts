@@ -47,7 +47,7 @@ interface ActiveEntry {
   streamId: string;
   agentId: string;
   chatId: string;
-  session: AgentSession;
+  abort: () => void;
 }
 
 export class AgentSessionManager {
@@ -144,16 +144,29 @@ export class AgentSessionManager {
       streamId,
       agentId: agent.id,
       chatId: chat.id,
-      session,
+      abort: () => session.abort(),
     });
     this.broadcast();
     return { streamId, session };
   }
 
+  /**
+   * Show a run that isn't an AgentSession (a team task) in the active-streams
+   * broadcast, so the sidebar, mascots and chat view know it's working.
+   */
+  trackExternal(streamId: string, agentId: string, chatId: string, abort: () => void): void {
+    this.active.set(streamId, { streamId, agentId, chatId, abort });
+    this.broadcast();
+  }
+
+  untrackExternal(streamId: string): void {
+    if (this.active.delete(streamId)) this.broadcast();
+  }
+
   abort(streamId: string): boolean {
     const entry = this.active.get(streamId);
     if (!entry) return false;
-    entry.session.abort();
+    entry.abort();
     return true;
   }
 

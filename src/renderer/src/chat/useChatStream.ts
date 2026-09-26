@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ipc } from '../lib/ipc';
 import { ipcErrorMessage } from '../lib/ipc-error';
+import { localStreamIds } from '../lib/local-streams';
 import {
   emptyStreaming,
   mergeEvents,
@@ -114,6 +115,8 @@ export function useChatStream(chatId: string | null): UseChatStreamResult {
       stopTimer();
       unsubRef.current?.();
       unsubRef.current = null;
+      // Unmounted mid-stream: let the app shell handle its approvals now.
+      if (streamIdRef.current) localStreamIds.delete(streamIdRef.current);
     };
   }, [stopTimer]);
 
@@ -152,6 +155,7 @@ export function useChatStream(chatId: string | null): UseChatStreamResult {
         return;
       }
       streamIdRef.current = streamId;
+      localStreamIds.add(streamId);
 
       const unsub = ipc.chat.subscribeToStream(
         streamId,
@@ -189,6 +193,7 @@ export function useChatStream(chatId: string | null): UseChatStreamResult {
           flush();
           unsubRef.current = null;
           streamIdRef.current = null;
+          localStreamIds.delete(streamId);
           setPendingApproval(null);
 
           const reason = endPayload.reason;

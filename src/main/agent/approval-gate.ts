@@ -1,4 +1,4 @@
-import { chatEventChannel } from '@shared/ipc-channels';
+import { CHANNELS, chatEventChannel } from '@shared/ipc-channels';
 import type { ApprovalPolicy, ToolPerms } from '@shared/chat-types';
 import type { AuditLogger } from '@main/services/audit-logger';
 import { evaluateConstitution, type ConstitutionRule } from './constitution';
@@ -93,6 +93,7 @@ export class ApprovalGate {
           { agentId: opts.agent.id, chatId: opts.chatId, streamId: opts.streamId },
           { toolName: opts.toolName, decision: 'auto-deny', args: opts.args },
         );
+        this.send(CHANNELS.APPROVAL_RESOLVED, { streamId: opts.streamId, toolCallId: opts.toolCallId });
         resolve('deny');
       }, this.autoDenyMs);
       this.pending.set(key, {
@@ -105,6 +106,17 @@ export class ApprovalGate {
       });
       this.send(chatEventChannel(opts.streamId), {
         type: 'tool-approval-required',
+        toolCallId: opts.toolCallId,
+        toolName: opts.toolName,
+        args: opts.args,
+        cwd: opts.cwd,
+      });
+      // Background runs (team tasks, routines, schedules) have no chat view
+      // subscribed to their stream; the app shell picks these up.
+      this.send(CHANNELS.APPROVAL_REQUEST, {
+        streamId: opts.streamId,
+        chatId: opts.chatId,
+        agentId: opts.agent.id,
         toolCallId: opts.toolCallId,
         toolName: opts.toolName,
         args: opts.args,
@@ -137,6 +149,7 @@ export class ApprovalGate {
       toolCallId,
       decision,
     });
+    this.send(CHANNELS.APPROVAL_RESOLVED, { streamId, toolCallId });
     return true;
   }
 }

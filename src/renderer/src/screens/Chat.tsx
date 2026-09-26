@@ -89,14 +89,30 @@ interface Props {
   pendingChat?: PendingChat | null;
   onChatActivity?: () => void;
   onNav?: (target: NavTarget) => void;
+  /** Every live stream in the app (chats, routines, team-run tasks). */
+  activeStreams?: Array<{ streamId: string; agentId: string; chatId: string }>;
 }
 
-export function Chat({ agent, openChatId, pendingChat, onChatActivity, onNav }: Props): JSX.Element {
+export function Chat({
+  agent,
+  openChatId,
+  pendingChat,
+  onChatActivity,
+  onNav,
+  activeStreams,
+}: Props): JSX.Element {
   const [activeChatId, setActiveChatId] = useState<string | null>(openChatId ?? null);
   const [filesOpen, setFilesOpen] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [openViews, setOpenViews] = useState<Set<ChatView>>(new Set());
   const stream = useChatStream(activeChatId);
+  // Work on this chat that this view didn't start: a team run from the Ask
+  // box, or a routine. Its replies arrive via the message poll.
+  const backgroundStreams =
+    stream.status === 'streaming' || !activeChatId
+      ? []
+      : (activeStreams ?? []).filter((s) => s.chatId === activeChatId);
+  const backgroundBusy = backgroundStreams.length > 0;
   // Track which pendingChat id we've already auto-sent for, so effect
   // re-runs (after onConsumed clears the prop) don't re-fire.
   const handledPendingRef = useRef<string | null>(null);
@@ -294,7 +310,10 @@ export function Chat({ agent, openChatId, pendingChat, onChatActivity, onNav }: 
               </div>
             ) : null}
           </div>
-          <StatusChip pending={!!stream.pendingApproval} status={stream.status} />
+          <StatusChip
+            pending={!!stream.pendingApproval}
+            status={backgroundBusy ? 'streaming' : stream.status}
+          />
         </div>
         <div className="right">
           {headerPrefs.tokenChip ? <TokenChip tokens={stream.tokens} cap={cap} /> : null}
@@ -377,12 +396,19 @@ export function Chat({ agent, openChatId, pendingChat, onChatActivity, onNav }: 
               streaming={stream.streamingAssistant}
               agent={agent}
               error={stream.status === 'error' ? stream.error : null}
+              backgroundWorkers={backgroundBusy ? backgroundStreams.length : 0}
             />
             <Composer
               disabled={false}
-              streaming={stream.status === 'streaming'}
+              streaming={stream.status === 'streaming' || backgroundBusy}
               onSend={(text) => void handleSend(text)}
-              onStop={stream.abort}
+              onStop={
+                backgroundBusy
+                  ? () => {
+                      for (const s of backgroundStreams) void ipc.chat.abort(s.streamId);
+                    }
+                  : stream.abort
+              }
               agent={agent}
               {...(activeChatId ? { chatId: activeChatId } : {})}
               {...(onNav ? { onNav } : {})}

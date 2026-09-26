@@ -17,6 +17,10 @@ export const CHANNELS = {
   CHAT_LIST_MODELS: 'chat:list-models',
   CHAT_ACTIVE_STREAMS: 'chat:active-streams',
   CHAT_APPROVAL_RESPONSE: 'chat:approval-response',
+  /** Every tool-approval request, also for runs no chat view is watching
+   *  (team tasks, routines, schedules) — the app shell shows those. */
+  APPROVAL_REQUEST: 'approval:request',
+  APPROVAL_RESOLVED: 'approval:resolved',
   CHAT_ROUTE: 'chat:route',
   FILES_LIST: 'files:list',
   FILES_READ: 'files:read',
@@ -1298,6 +1302,17 @@ export type ChatDeleteChatResponse = z.infer<typeof schemas.chatDeleteChatRespon
 export type ChatRenameChatResponse = z.infer<typeof schemas.chatRenameChatResponse>;
 export type ChatGenerateAgentRequest = z.infer<typeof schemas.chatGenerateAgentRequest>;
 export type ChatGenerateAgentResponse = z.infer<typeof schemas.chatGenerateAgentResponse>;
+
+/** Payload of CHANNELS.APPROVAL_REQUEST (every tool approval, any run). */
+export interface GlobalApprovalRequest {
+  streamId: string;
+  chatId: string;
+  agentId: string;
+  toolCallId: string;
+  toolName: string;
+  args: unknown;
+  cwd: string;
+}
 
 export interface OllamaPullProgress {
   status: string;

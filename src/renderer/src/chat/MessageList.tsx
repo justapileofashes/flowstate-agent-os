@@ -14,6 +14,8 @@ interface Props {
   agent?: AgentDto;
   /** Why the last turn failed; shown inline under the conversation. */
   error?: string | null;
+  /** Agents working on this chat in the background (team run, routine). */
+  backgroundWorkers?: number;
 }
 
 function TurnError({ error }: { error: string }): JSX.Element {
@@ -101,7 +103,7 @@ function shorten(s: string, max = 40): string {
   return s.length > max ? '…' + s.slice(-max + 1) : s;
 }
 
-export function MessageList({ messages, streaming, agent, error }: Props): JSX.Element {
+export function MessageList({ messages, streaming, agent, error, backgroundWorkers = 0 }: Props): JSX.Element {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const pinnedRef = useRef(true);
   // Replay mode: cursor is an index into the visible (non-tool) message
@@ -216,6 +218,27 @@ export function MessageList({ messages, streaming, agent, error }: Props): JSX.E
                   ))}
                 </div>
               ) : null}
+            </div>
+          </div>
+        ) : null}
+        {!isReplaying && !streaming && backgroundWorkers > 0 ? (
+          <div className="msg">
+            <div className="avatar" style={{ padding: 0 }}>
+              {agent ? <AgentAvatar agent={agent} size={20} /> : <span>▲</span>}
+            </div>
+            <div className="body">
+              <div className="role">
+                team
+                <span className="pill streaming" style={{ marginLeft: 8, height: 18, padding: '0 7px' }}>
+                  <span className="dot" />
+                  <span>
+                    {backgroundWorkers === 1 ? '1 agent working' : `${backgroundWorkers} agents working`}
+                  </span>
+                </span>
+              </div>
+              <div className="muted text-xs" style={{ marginTop: 4 }}>
+                Replies appear here as each agent finishes.
+              </div>
             </div>
           </div>
         ) : null}

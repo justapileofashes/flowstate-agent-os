@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ipc } from './lib/ipc';
 import type { AgentDto } from '@shared/chat-types';
-import type { ChatListRecentChatsResponse } from '@shared/ipc-channels';
+import type {
+  ActiveStreamsBroadcast,
+  ChatListRecentChatsResponse,
+  GlobalApprovalRequest,
+} from '@shared/ipc-channels';
+import { ApprovalModal } from './chat/ApprovalModal';
+import { localStreamIds } from './lib/local-streams';
 import { Settings } from './screens/Settings';
 import { Chat } from './screens/Chat';
 import { Dashboard } from './screens/Dashboard';
@@ -63,6 +69,8 @@ export function App(): JSX.Element {
   const [ollamaStartError, setOllamaStartError] = useState<string | null>(null);
   const [teamPrompt, setTeamPrompt] = useState<string | null>(null);
   const [streamingChatIds, setStreamingChatIds] = useState<Set<string>>(new Set());
+  const [activeStreams, setActiveStreams] = useState<ActiveStreamsBroadcast['active']>([]);
+  const [bgApprovals, setBgApprovals] = useState<GlobalApprovalRequest[]>([]);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [dashboardKey, setDashboardKey] = useState(0);
   const liveStatus = useAgentLiveStatus();
@@ -80,10 +88,8 @@ export function App(): JSX.Element {
       return null;
     }
   })();
-  const [swarmAgentIds, setSwarmAgentIds] = useState<string[]>([]);
-  // Union streaming agents w/ recent swarm. Streaming agents always
-  // appear; swarm members linger for visual presence.
-  const liveAgentIds = Array.from(new Set<string>([...liveStatus.keys(), ...swarmAgentIds]));
+  // Agents with a live stream — chats, routines and each team-run task.
+  const liveAgentIds = Array.from(liveStatus.keys());
   const [customizeOpen, setCustomizeOpen] = useState(false);
   const prefs = useCustomizePrefs();
 
@@ -103,26 +109,33 @@ export function App(): JSX.Element {
       text: string,
       reasoning: string,
       fallback: boolean,
-      swarm: string[] = [],
+      _swarm: string[] = [],
       team = false,
     ) => {
-      const agent = agents.find((a) => a.id === agentId);
-      if (!agent) {
-        return;
-      }
-      // RoutingToast intentionally suppressed — routing now happens
-      // instantly and the user lands directly in the chat session.
-      setView({ kind: 'chat', agent, openChatId: chatId });
-      // In team mode the backend already persisted the user prompt + is
-      // running the coordinator in the background. Skip pendingChat so
-      // the renderer doesn't double-send via the single-agent stream.
-      if (!team) setPendingChat({ chatId, firstMessage: text });
-      // Deploy the swarm: mascots of every chosen agent appear on the
-      // chatbar for ~30s, even if only the primary is actually streaming.
-      // Gives the visual impression of "the orchestrator engaged a team".
-      if (swarm.length > 0) setSwarmAgentIds(swarm);
-      setTimeout(() => setSwarmAgentIds([]), 30_000);
-      void refreshRecentChats();
+      void (async () => {
+        let agent = agents.find((a) => a.id === agentId);
+        if (!agent) {
+          // Routed to an agent this window hasn't loaded yet (e.g. just
+          // imported from a plugin) — reload instead of dropping the prompt.
+          try {
+            const { agents: fresh } = await ipc.chat.listAgents();
+            setAgents(fresh);
+            agent = fresh.find((a) => a.id === agentId);
+          } catch {
+            // fall through
+          }
+        }
+        if (!agent) return;
+        // RoutingToast intentionally suppressed — routing now happens
+        // instantly and the user lands directly in the chat session.
+        setView({ kind: 'chat', agent, openChatId: chatId });
+        // In team mode the backend already persisted the user prompt + is
+        // running the coordinator in the background. Skip pendingChat so
+        // the renderer doesn't double-send via the single-agent stream.
+        // (Team agents show up as live via the active-streams broadcast.)
+        if (!team) setPendingChat({ chatId, firstMessage: text });
+        void refreshRecentChats();
+      })();
     },
     [agents, refreshRecentChats],
   );
@@ -221,6 +234,7 @@ export function App(): JSX.Element {
   // stream completes so titles + ordering stay fresh in real time.
   useEffect(() => {
     const unsubscribe = ipc.chat.subscribeToActiveStreams((payload) => {
+      setActiveStreams(payload.active);
       setStreamingChatIds((prev) => {
         const next = new Set(payload.active.map((s) => s.chatId));
         // If something dropped (a stream ended), refresh recent chats.
@@ -240,6 +254,27 @@ export function App(): JSX.Element {
       offRoutine();
     };
   }, [refreshRecentChats]);
+
+  // Tool approvals from runs no chat view is watching (team-run tasks,
+  // routines, schedules) used to go nowhere and auto-deny after 5 minutes.
+  useEffect(() => {
+    const offReq = ipc.approvals.onRequest((p) => {
+      // A chat view claims its stream right after send(); give it a beat.
+      setTimeout(() => {
+        if (localStreamIds.has(p.streamId)) return;
+        setBgApprovals((q) =>
+          q.some((x) => x.streamId === p.streamId && x.toolCallId === p.toolCallId) ? q : [...q, p],
+        );
+      }, 150);
+    });
+    const offRes = ipc.approvals.onResolved((p) =>
+      setBgApprovals((q) => q.filter((x) => !(x.streamId === p.streamId && x.toolCallId === p.toolCallId))),
+    );
+    return () => {
+      offReq();
+      offRes();
+    };
+  }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
@@ -531,6 +566,7 @@ export function App(): JSX.Element {
               <Chat
                 agent={view.agent}
                 openChatId={view.openChatId ?? null}
+                activeStreams={activeStreams}
                 onChatActivity={onChatActivity}
                 onNav={(target) => setView({ kind: target })}
                 pendingChat={
@@ -608,6 +644,23 @@ export function App(): JSX.Element {
               if (dontShow) {
                 void ipc.settings.set('seen_shortcuts_intro', 'true');
               }
+            }}
+          />
+        ) : null}
+        {bgApprovals[0] ? (
+          <ApprovalModal
+            key={`${bgApprovals[0].streamId}:${bgApprovals[0].toolCallId}`}
+            pending={bgApprovals[0]}
+            context={`${agents.find((a) => a.id === bgApprovals[0]!.agentId)?.name ?? 'Agent'} · background run`}
+            onRespond={(decision, reason) => {
+              const a = bgApprovals[0]!;
+              void ipc.chat.respondToApproval({
+                streamId: a.streamId,
+                toolCallId: a.toolCallId,
+                decision,
+                ...(reason ? { reason } : {}),
+              });
+              setBgApprovals((q) => q.slice(1));
             }}
           />
         ) : null}

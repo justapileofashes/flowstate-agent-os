@@ -182,6 +182,12 @@ interface FlowstateApi {
     importAgents: (id: string) => Promise<{ ok: boolean; count: number }>;
     subscribeStatus: (cb: (payload: PluginsStatusBroadcast) => void) => () => void;
   };
+  approvals: {
+    onRequest: (
+      cb: (payload: import('@shared/ipc-channels').GlobalApprovalRequest) => void,
+    ) => () => void;
+    onResolved: (cb: (payload: { streamId: string; toolCallId: string }) => void) => () => void;
+  };
   terminal: {
     start: (
       id: string,

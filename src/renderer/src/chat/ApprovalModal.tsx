@@ -15,9 +15,11 @@ interface Props {
     decision: 'allow-once' | 'allow-rest' | 'deny',
     reason?: string,
   ) => void;
+  /** Who is asking, for requests from background runs. */
+  context?: string;
 }
 
-export function ApprovalModal({ pending, onRespond }: Props): JSX.Element {
+export function ApprovalModal({ pending, onRespond, context }: Props): JSX.Element {
   const [reason, setReason] = useState('');
   const isShell = pending.toolName === 'run_shell';
   const command = isShell ? (pending.args as { command?: string }).command ?? '' : '';
@@ -37,6 +39,7 @@ export function ApprovalModal({ pending, onRespond }: Props): JSX.Element {
         <header className="flex items-center gap-2">
           <span className="text-[var(--accent)]">!</span>
           <h3 className="text-base font-semibold">Approval needed</h3>
+          {context ? <span className="text-xs text-[var(--ink-faint)]">· {context}</span> : null}
         </header>
         <div className="text-sm space-y-1">
           <div>

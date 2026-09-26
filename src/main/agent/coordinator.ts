@@ -151,6 +151,16 @@ interface RunState {
   signal: AbortSignal;
   emit: (e: TeamEvent) => void;
   controllers: Map<string, TaskController>;
+  /** Write the finished run as its own "Team · …" chat. */
+  persist: boolean;
+}
+
+export interface CoordinatorStartOpts {
+  /**
+   * Set false when the caller already records the run in a chat (the Ask-box
+   * route does), otherwise every team run showed up twice in the sidebar.
+   */
+  persist?: boolean;
 }
 
 export class Coordinator {
@@ -161,6 +171,7 @@ export class Coordinator {
   start(
     userText: string,
     onEvent: (e: TeamEvent) => void,
+    opts: CoordinatorStartOpts = {},
   ): { handle: CoordinatorRunHandle; done: Promise<void> } {
     const runId = randomUUID();
     const aborter = new AbortController();
@@ -168,6 +179,7 @@ export class Coordinator {
       signal: aborter.signal,
       emit: onEvent,
       controllers: new Map(),
+      persist: opts.persist ?? true,
     };
     this.runs.set(runId, state);
 
@@ -366,16 +378,18 @@ export class Coordinator {
       // Persist as a chat under the synthesizer agent so the team run
       // shows up in the sidebar session list.
       let persistedChatId: string | undefined;
-      try {
-        persistedChatId = this.persistTeamRun(
-          synth.id,
-          userText,
-          plan,
-          taskOutputs,
-          synthesisBuffer,
-        );
-      } catch (err) {
-        console.warn('[flowstate] team-run persist failed:', err);
+      if (state.persist) {
+        try {
+          persistedChatId = this.persistTeamRun(
+            synth.id,
+            userText,
+            plan,
+            taskOutputs,
+            synthesisBuffer,
+          );
+        } catch (err) {
+          console.warn('[flowstate] team-run persist failed:', err);
+        }
       }
 
       emit({
