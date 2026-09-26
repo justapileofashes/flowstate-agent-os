@@ -4,9 +4,12 @@ import { useAgentLiveStatus } from '../chat/useAgentLiveStatus';
 import { GlobalAskBox } from '../chat/GlobalAskBox';
 import { ResourceMeters } from '../chat/ResourceMeters';
 import { CompareModal } from '../chat/CompareModal';
+import { SimpleAgentModal } from '../chat/SimpleAgentModal';
+import { AgentFormModal } from '../chat/AgentFormModal';
 import { useCustomizePrefs } from '../lib/CustomizeContext';
 import type { DashboardSectionId } from '../lib/customize';
 import { ipc } from '../lib/ipc';
+import { ipcErrorMessage } from '../lib/ipc-error';
 
 interface Props {
   agents: AgentDto[];
@@ -42,9 +45,19 @@ function greetingForNow(): string {
 export function Dashboard({
   agents,
   onOpenChat,
+  onAgentsChanged,
   onRouted,
   onTeamRun,
 }: Props): JSX.Element {
+  const [newAgent, setNewAgent] = useState<'simple' | 'manual' | null>(null);
+  const [showAllAgents, setShowAllAgents] = useState(false);
+  // Suggestion chips with an unfinished prompt pre-fill the Ask box.
+  const [askSeed, setAskSeed] = useState<{ text: string; nonce: number } | null>(null);
+  const agentCreated = (agent: AgentDto): void => {
+    setNewAgent(null);
+    onAgentsChanged();
+    onOpenChat(agent);
+  };
   const liveStatus = useAgentLiveStatus();
   const activeCount = Array.from(liveStatus.values()).filter((s) => s === 'streaming').length;
   const greeting = useMemo(greetingForNow, []);
@@ -71,8 +84,11 @@ export function Dashboard({
         return (
           <div key="composer">
             <div style={{ margin: '24px 48px 0' }}>
-              <GlobalAskBox onRouted={onRouted} onTeamRun={onTeamRun} />
-              <SmartChips onRouted={onRouted} />
+              <GlobalAskBox onRouted={onRouted} onTeamRun={onTeamRun} seed={askSeed} />
+              <SmartChips
+                onRouted={onRouted}
+                onFill={(text) => setAskSeed((s) => ({ text, nonce: (s?.nonce ?? 0) + 1 }))}
+              />
             </div>
             {/* Surface 3 — always-on system meters: what local models cost the machine. */}
             <ResourceMeters />
@@ -118,9 +134,19 @@ export function Dashboard({
       case 'recent':
         return (
           <div style={{ margin: '24px 48px 0' }} key="recent">
-            <div className="eyebrow" style={{ marginBottom: 10 }}>Specialists</div>
+            <div className="row gap-2" style={{ marginBottom: 10, alignItems: 'center' }}>
+              <div className="eyebrow">Specialists</div>
+              <button
+                type="button"
+                className="btn btn-sm btn-ghost"
+                style={{ marginLeft: 'auto' }}
+                onClick={() => setNewAgent('simple')}
+              >
+                + New agent
+              </button>
+            </div>
             <div className="row gap-2" style={{ flexWrap: 'wrap' }}>
-              {agents.slice(0, 12).map((a) => (
+              {(showAllAgents ? agents : agents.slice(0, 12)).map((a) => (
                 <button
                   key={a.id}
                   type="button"
@@ -130,6 +156,15 @@ export function Dashboard({
                   {a.name}
                 </button>
               ))}
+              {agents.length > 12 ? (
+                <button
+                  type="button"
+                  className="btn btn-sm btn-ghost muted"
+                  onClick={() => setShowAllAgents((v) => !v)}
+                >
+                  {showAllAgents ? 'Show fewer' : `Show all ${agents.length}`}
+                </button>
+              ) : null}
             </div>
           </div>
         );
@@ -146,6 +181,16 @@ export function Dashboard({
       {prefs.dashboardSections
         .filter((s) => s.visible)
         .map((s) => renderSection(s.id))}
+      {newAgent === 'simple' ? (
+        <SimpleAgentModal
+          onClose={() => setNewAgent(null)}
+          onCreated={agentCreated}
+          onManualCreate={() => setNewAgent('manual')}
+        />
+      ) : null}
+      {newAgent === 'manual' ? (
+        <AgentFormModal mode="create" onClose={() => setNewAgent(null)} onSaved={agentCreated} />
+      ) : null}
     </div>
   );
 }
@@ -154,6 +199,7 @@ export function Dashboard({
  *  the orchestrator on click so the user gets to a session in one tap. */
 function SmartChips({
   onRouted,
+  onFill,
 }: {
   onRouted: (
     agentId: string,
@@ -164,8 +210,11 @@ function SmartChips({
     swarm?: string[],
     team?: boolean,
   ) => void;
+  /** Put an unfinished prompt ("Research … ") in the Ask box to complete. */
+  onFill: (text: string) => void;
 }): JSX.Element {
   const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const SUGGESTIONS = [
     { label: 'Explain a codebase', prompt: 'Walk me through the architecture of this repo.' },
     { label: 'Research a topic', prompt: 'Research the latest developments in ' },
@@ -177,30 +226,40 @@ function SmartChips({
 
   async function pick(prompt: string): Promise<void> {
     if (busy) return;
+    // "Draft a short blog post about " needs the user's topic first — these
+    // used to be sent as-is.
+    if (/\s$|:\s*$/.test(prompt)) {
+      onFill(prompt);
+      return;
+    }
     setBusy(prompt);
+    setError(null);
     try {
       const res = await ipc.chat.route(prompt);
       onRouted(res.agentId, res.chatId, prompt, res.reasoning, res.fallback, res.swarm, res.team);
-    } catch {
-      // best-effort
+    } catch (err) {
+      setError(ipcErrorMessage(err));
     } finally {
       setBusy(null);
     }
   }
 
   return (
-    <div className="row gap-2 mt-3" style={{ flexWrap: 'wrap' }}>
-      {SUGGESTIONS.map((s) => (
-        <button
-          key={s.label}
-          type="button"
-          className="btn btn-sm btn-ghost"
-          onClick={() => void pick(s.prompt)}
-          disabled={busy !== null}
-        >
-          {busy === s.prompt ? 'Routing…' : s.label}
-        </button>
-      ))}
+    <div className="mt-3">
+      <div className="row gap-2" style={{ flexWrap: 'wrap' }}>
+        {SUGGESTIONS.map((s) => (
+          <button
+            key={s.label}
+            type="button"
+            className="btn btn-sm btn-ghost"
+            onClick={() => void pick(s.prompt)}
+            disabled={busy !== null}
+          >
+            {busy === s.prompt ? 'Routing…' : s.label}
+          </button>
+        ))}
+      </div>
+      {error ? <div className="text-xs mt-2" style={{ color: 'var(--bad)' }}>{error}</div> : null}
     </div>
   );
 }
