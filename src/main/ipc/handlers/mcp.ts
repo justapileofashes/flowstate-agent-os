@@ -1,4 +1,5 @@
-import { ipcMain, BrowserWindow } from 'electron';
+import { ipcMain } from 'electron';
+import { broadcast } from '@main/util/broadcast';
 import { CHANNELS, schemas } from '@shared/ipc-channels';
 import type { McpManager } from '@main/services/mcp-manager';
 import type { SettingsService } from '@main/services/settings-service';
@@ -88,8 +89,7 @@ export function registerMcpHandlers(deps: {
 
   // Broadcast status changes to renderer
   deps.manager.on('status', (status) => {
-    const win = BrowserWindow.getAllWindows()[0];
-    win?.webContents.send(CHANNELS.MCP_STATUS, { status });
+    broadcast(CHANNELS.MCP_STATUS, { status });
   });
 
   ipcMain.handle(CHANNELS.MCP_LIST, () => {

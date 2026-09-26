@@ -1,4 +1,5 @@
-import { ipcMain, BrowserWindow } from 'electron';
+import { ipcMain } from 'electron';
+import { broadcast } from '@main/util/broadcast';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { CHANNELS, schemas, teamEventChannel, teamEventEndChannel } from '@shared/ipc-channels';
@@ -183,10 +184,7 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
 
   ipcMain.handle(CHANNELS.CHAT_TEAM_RUN, (_e, raw) => {
     const { text } = schemas.chatTeamRunRequest.parse(raw);
-    const send = (channel: string, payload: unknown): void => {
-      const win = BrowserWindow.getAllWindows()[0];
-      win?.webContents.send(channel, payload);
-    };
+    const send = broadcast;
     const { handle, done } = deps.coordinator.start(text, (event) => {
       send(teamEventChannel(handle.runId), event);
     });

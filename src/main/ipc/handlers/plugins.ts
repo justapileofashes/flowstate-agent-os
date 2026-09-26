@@ -1,4 +1,5 @@
-import { ipcMain, BrowserWindow } from 'electron';
+import { ipcMain } from 'electron';
+import { broadcast } from '@main/util/broadcast';
 import { join } from 'node:path';
 import { mkdir } from 'node:fs/promises';
 import { CHANNELS, schemas } from '@shared/ipc-channels';
@@ -54,8 +55,7 @@ export function registerPluginHandlers(deps: {
   // Re-sync MCP + broadcast plugin status whenever the plugin set changes.
   pluginManager.on('status', (plugins: InstalledPlugin[]) => {
     syncMcp();
-    const win = BrowserWindow.getAllWindows()[0];
-    win?.webContents.send(CHANNELS.PLUGINS_STATUS, { plugins: plugins.map(toDto) });
+    broadcast(CHANNELS.PLUGINS_STATUS, { plugins: plugins.map(toDto) });
   });
 
   ipcMain.handle(CHANNELS.PLUGINS_LIST, () => ({ plugins: pluginManager.list().map(toDto) }));

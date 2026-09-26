@@ -50,6 +50,7 @@ import { SEED_AGENTS } from './seed-agents';
 import { registerIpcHandlers } from './ipc/register';
 import { getConnectedClis } from './ipc/handlers/clis';
 import { decideNotification } from './services/notify';
+import { broadcast } from './util/broadcast';
 import {
   PREVIEW_SCHEME,
   installPreviewProtocol,
@@ -365,17 +366,17 @@ app.whenReady().then(async () => {
     console.warn('[flowstate] auto-assign failed:', err);
   }
 
+  // Every window gets chat events: a popped-out chat lives in its own window.
   const send = (channel: string, payload: unknown) => {
-    const win = BrowserWindow.getAllWindows()[0];
-    win?.webContents.send(channel, payload);
-    maybeNotify(win, payload);
+    broadcast(channel, payload);
+    maybeNotify(payload);
   };
 
-  // Desktop notification when the user is away from the window (roadmap 2c).
+  // Desktop notification when the user is away from the app (roadmap 2c).
   // Opt-out via the settings KV: notifications_enabled = 'false'.
-  const maybeNotify = (win: BrowserWindow | undefined, payload: unknown) => {
+  const maybeNotify = (payload: unknown) => {
     if (settings.get('notifications_enabled') === 'false') return;
-    if (win && win.isFocused() && !win.isMinimized()) return;
+    if (BrowserWindow.getAllWindows().some((w) => w.isFocused() && !w.isMinimized())) return;
     const content = decideNotification(payload);
     if (!content || !Notification.isSupported()) return;
     const notif = new Notification({ title: content.title, body: content.body });

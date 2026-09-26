@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { BrowserWindow, ipcMain } from 'electron';
+import { ipcMain } from 'electron';
+import { broadcast } from '@main/util/broadcast';
 import {
   CHANNELS,
   ollamaPullEndChannel,
@@ -23,10 +24,7 @@ export function registerOllamaHandlers(client: OllamaClient, provider: LLMProvid
     const controller = new AbortController();
     activePulls.set(pullId, controller);
 
-    const send = (channel: string, payload: unknown): void => {
-      const win = BrowserWindow.getAllWindows()[0];
-      win?.webContents.send(channel, payload);
-    };
+    const send = broadcast;
 
     void (async () => {
       try {
