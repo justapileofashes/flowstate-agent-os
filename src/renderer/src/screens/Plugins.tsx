@@ -110,7 +110,7 @@ function compBadges(c: PluginDto['components']): string[] {
   return out;
 }
 
-export function Plugins(): JSX.Element {
+export function Plugins({ onAgentsChanged }: { onAgentsChanged?: () => void } = {}): JSX.Element {
   const [plugins, setPlugins] = useState<PluginDto[]>([]);
   const [marketplaces, setMarketplaces] = useState<PluginMarketplaceDto[]>([]);
   const [available, setAvailable] = useState<PluginMarketplacePluginDto[]>([]);
@@ -339,6 +339,7 @@ export function Plugins(): JSX.Element {
                     <button className="btn btn-sm btn-ghost" disabled={busy} onClick={() => void run(async () => {
                       const r = await ipc.plugins.importAgents(p.id);
                       if (r.count === 0) throw new Error('No new agents to import (already present).');
+                      onAgentsChanged?.();
                     })}>
                       Import {p.components.agents} agent{p.components.agents === 1 ? '' : 's'}
                     </button>

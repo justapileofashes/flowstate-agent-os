@@ -600,11 +600,20 @@ function CloudConnector({
     onSaved(`${label} disconnected.`);
   }
 
+  // The test runs against the stored key, so a freshly typed key used to be
+  // "tested" without ever being checked. Save it first when it changed.
   async function runTest(): Promise<void> {
     setTesting(true);
     try {
-      const res = await ipc.cloud.test(provider);
-      setTest(res);
+      const typed = currentKey.trim();
+      const stored = (await ipc.settings.get(settingsKey)).value ?? '';
+      if (typed && typed !== stored) {
+        await ipc.settings.set(settingsKey, typed);
+        onSaved(`${label} key saved.`);
+      }
+      setTest(await ipc.cloud.test(provider));
+    } catch (err) {
+      setTest({ ok: false, models: 0, error: ipcErrorMessage(err) });
     } finally {
       setTesting(false);
     }

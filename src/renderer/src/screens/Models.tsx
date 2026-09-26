@@ -19,7 +19,7 @@ interface DownloadState {
   error?: string;
 }
 
-export function Models(): JSX.Element {
+export function Models({ onAgentsChanged }: { onAgentsChanged?: () => void } = {}): JSX.Element {
   const [data, setData] = useState<ModelsCatalogResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -171,6 +171,7 @@ export function Models(): JSX.Element {
               try {
                 const res = await ipc.models.autoAssignAgents();
                 setAutoAssign({ running: false, matches: res.matches });
+                if (res.matches.some((m) => m.changed)) onAgentsChanged?.();
               } catch (err) {
                 setAutoAssign({ running: false, matches: [] });
                 // eslint-disable-next-line no-console

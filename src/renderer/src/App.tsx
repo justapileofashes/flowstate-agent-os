@@ -528,7 +528,7 @@ export function App(): JSX.Element {
             {view.kind === 'settings' ? (
               <Settings />
             ) : view.kind === 'models' ? (
-              <Models />
+              <Models onAgentsChanged={() => void refreshAgents()} />
             ) : view.kind === 'brain' ? (
               <Brain />
             ) : view.kind === 'connectors' ? (
@@ -536,7 +536,7 @@ export function App(): JSX.Element {
             ) : view.kind === 'coding-clis' ? (
               <CodingClis />
             ) : view.kind === 'plugins' ? (
-              <Plugins />
+              <Plugins onAgentsChanged={() => void refreshAgents()} />
             ) : view.kind === 'routines' ? (
               <Routines agents={agents} onOpenChat={openChat} />
             ) : view.kind === 'flowclaw' ? (

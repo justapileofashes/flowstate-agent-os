@@ -49,8 +49,10 @@ export function registerClisHandlers(deps: { settings: SettingsService }): void 
     // best-effort; detect again on demand
   });
 
-  ipcMain.handle(CHANNELS.CLIS_DETECT, async () => {
-    if (cache && Date.now() - cache.at < CACHE_TTL_MS) return { clis: cache.clis };
+  ipcMain.handle(CHANNELS.CLIS_DETECT, async (_e, raw) => {
+    // "Re-scan" forces a fresh probe (it used to return the 60 s cache).
+    const force = !!(raw && typeof raw === 'object' && (raw as { force?: unknown }).force === true);
+    if (!force && cache && Date.now() - cache.at < CACHE_TTL_MS) return { clis: cache.clis };
     return { clis: await refresh() };
   });
 

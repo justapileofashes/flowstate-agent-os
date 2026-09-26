@@ -13,6 +13,8 @@ import type { PluginManager } from '@main/services/plugin-manager';
 import type { McpManager } from '@main/services/mcp-manager';
 import type { ChatRepository } from '@main/repos/chat-repository';
 import type { InstalledPlugin } from '@main/services/plugin-types';
+import type { LLMProvider } from '@main/agent/llm-provider';
+import { providerKindForModel } from '@main/agent/provider-router';
 
 function toDto(p: InstalledPlugin): PluginDto {
   return {
@@ -44,8 +46,22 @@ export function registerPluginHandlers(deps: {
   mcpManager: McpManager;
   repo: ChatRepository;
   workspacesDir: string;
+  provider?: LLMProvider;
 }): void {
   const { pluginManager, mcpManager, repo, workspacesDir } = deps;
+
+  /**
+   * Claude Code agent files name their model by alias ("sonnet", "opus",
+   * "haiku", "inherit") or leave it out. Copied as-is those were routed to
+   * Ollama and 404'd, so use a real installed model instead.
+   */
+  async function resolveAgentModel(declared: string | undefined): Promise<string> {
+    const m = (declared ?? '').trim();
+    if (m && !/^(sonnet|opus|haiku|inherit|default)$/i.test(m)) return m;
+    const installed = deps.provider ? await deps.provider.listModels().catch(() => []) : [];
+    const local = installed.map((x) => x.name).find((n) => providerKindForModel(n) === 'ollama');
+    return local ?? repo.getAgent('agent-code-helper')?.model ?? 'qwen2.5-coder:14b';
+  }
 
   // Push plugin-contributed MCP servers into the manager's plugin layer.
   const syncMcp = (): void => {
@@ -155,7 +171,7 @@ export function registerPluginHandlers(deps: {
         description: def.description || `Imported from plugin ${id}`,
         specialtyTags: [],
         systemPrompt: def.body,
-        model: def.model ?? '',
+        model: await resolveAgentModel(def.model),
         avatarColor: '#a09a8e',
         workspacePath: wsPath,
         toolPerms: {

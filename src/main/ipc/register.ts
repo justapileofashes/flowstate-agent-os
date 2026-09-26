@@ -112,6 +112,7 @@ export function registerIpcHandlers(deps: {
     mcpManager: deps.mcpManager,
     repo: deps.repo,
     workspacesDir: deps.workspacesDir,
+    provider: deps.provider,
   });
   registerTerminalHandlers();
   registerScheduleHandlers({ repo: deps.repo, manager: deps.manager });
