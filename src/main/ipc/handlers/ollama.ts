@@ -49,7 +49,7 @@ export function registerOllamaHandlers(client: OllamaClient, provider: LLMProvid
 
   ipcMain.handle(CHANNELS.OLLAMA_START, async () => {
     // Try Windows tray app first (better UX — keeps Ollama in tray), fall
-    // back to `ollama serve` headless via PATH.
+    // back to `ollama serve` headless (install dir, then PATH).
     const home = process.env['LOCALAPPDATA'] ?? '';
     const trayCandidates = [
       home ? join(home, 'Programs', 'Ollama', 'ollama app.exe') : '',
@@ -58,35 +58,27 @@ export function registerOllamaHandlers(client: OllamaClient, provider: LLMProvid
       'C:\\Program Files\\Ollama\\Ollama.exe',
     ].filter((p) => p.length > 0);
     for (const p of trayCandidates) {
-      if (existsSync(p)) {
-        try {
-          const child = spawn(p, [], { detached: true, stdio: 'ignore', windowsHide: true });
-          child.unref();
-          return { ok: true, mode: 'tray' as const };
-        } catch {
-          // fall through to serve attempt
-        }
+      if (existsSync(p) && (await spawnDetached(p, [])) === null) {
+        return { ok: true, mode: 'tray' as const };
       }
     }
-    try {
-      const child = spawn('ollama', ['serve'], {
-        detached: true,
-        stdio: 'ignore',
-        windowsHide: true,
-        shell: false,
-      });
-      child.unref();
-      return { ok: true, mode: 'serve' as const };
-    } catch (err) {
-      return {
-        ok: false,
-        mode: 'serve' as const,
-        error:
-          err instanceof Error
-            ? `Could not start Ollama: ${err.message}. Install Ollama from https://ollama.com or ensure it is on PATH.`
-            : 'Could not start Ollama.',
-      };
+    const cliCandidates = [
+      home ? join(home, 'Programs', 'Ollama', 'ollama.exe') : '',
+      'C:\\Program Files\\Ollama\\ollama.exe',
+    ].filter((p) => p.length > 0 && existsSync(p));
+    let lastError = '';
+    for (const bin of [...cliCandidates, 'ollama']) {
+      const error = await spawnDetached(bin, ['serve']);
+      if (error === null) return { ok: true, mode: 'serve' as const };
+      lastError = error;
     }
+    return {
+      ok: false,
+      mode: 'serve' as const,
+      error: /ENOENT/.test(lastError)
+        ? 'Ollama is not installed (or not on PATH). Install it from https://ollama.com/download, then try again.'
+        : `Could not start Ollama: ${lastError}`,
+    };
   });
 
   ipcMain.handle(CHANNELS.OLLAMA_PULL_CANCEL, (_e, raw) => {
@@ -217,6 +209,32 @@ export function registerOllamaHandlers(client: OllamaClient, provider: LLMProvid
         fetchedAt: Date.now(),
         error: err instanceof Error ? err.message : String(err),
       };
+    }
+  });
+}
+
+/**
+ * Launch a detached background process. Resolves `null` once the OS has
+ * started it, or the error message if it couldn't (e.g. ENOENT). Spawn
+ * failures are reported asynchronously via 'error', so a bare try/catch never
+ * sees them — and an unhandled 'error' crashes the main process.
+ */
+function spawnDetached(cmd: string, args: string[]): Promise<string | null> {
+  return new Promise((resolve) => {
+    try {
+      const child = spawn(cmd, args, {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true,
+        shell: false,
+      });
+      child.once('error', (err) => resolve(err.message));
+      child.once('spawn', () => {
+        child.unref();
+        resolve(null);
+      });
+    } catch (err) {
+      resolve(err instanceof Error ? err.message : String(err));
     }
   });
 }

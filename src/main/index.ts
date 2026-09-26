@@ -55,6 +55,18 @@ const here = fileURLToPath(new URL('.', import.meta.url));
 
 let db: DB | null = null;
 
+// Without a handler, Electron turns any stray async error in the main process
+// (e.g. a child process 'error' nobody listened for) into a blocking modal
+// dialog. Log instead; startup failures are still surfaced by showFatalDialog.
+process.on('uncaughtException', (err) => {
+  // eslint-disable-next-line no-console
+  console.error('[main] uncaught exception:', err);
+});
+process.on('unhandledRejection', (reason) => {
+  // eslint-disable-next-line no-console
+  console.error('[main] unhandled rejection:', reason);
+});
+
 function resolveIcon(): Electron.NativeImage | undefined {
   // Try common locations for the app icon (dev tree + packaged resources).
   const candidates = [
