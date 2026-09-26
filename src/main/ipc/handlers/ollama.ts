@@ -2,8 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { ipcMain } from 'electron';
+import { ipcMain, shell } from 'electron';
 import { broadcast } from '@main/util/broadcast';
+import { extractSigninUrl, getCloudStatus } from '@main/services/ollama-cloud';
 import {
   CHANNELS,
   ollamaPullEndChannel,
@@ -89,72 +90,60 @@ export function registerOllamaHandlers(client: OllamaClient, provider: LLMProvid
   });
 
   // ── Ollama cloud (Turbo) auth ─────────────────────────────────────────
-  // `ollama signin` opens the browser auth flow + stores credentials in
-  // ~/.ollama/. After signin, the local Ollama daemon transparently routes
-  // selected cloud-only models (gpt-oss:120b, llama3.3:70b-cloud, etc.)
-  // through Ollama Turbo, so no additional API plumbing is needed.
-  ipcMain.handle(CHANNELS.OLLAMA_CLOUD_SIGNIN, async () => {
-    return new Promise<{ ok: boolean; output: string; error?: string }>((resolve) => {
-      try {
-        const proc = spawn('ollama', ['signin'], {
-          windowsHide: true,
-          shell: false,
-        });
-        let stdout = '';
-        let stderr = '';
-        proc.stdout?.on('data', (b) => { stdout += b.toString(); });
-        proc.stderr?.on('data', (b) => { stderr += b.toString(); });
-        proc.on('error', (err) => {
-          resolve({
-            ok: false,
-            output: stdout,
-            error:
-              'Could not run `ollama signin`. Make sure Ollama 0.5+ is installed and on PATH. ' +
-              err.message,
-          });
-        });
-        proc.on('close', (code) => {
-          if (code === 0) {
-            resolve({ ok: true, output: stdout || stderr });
-          } else {
-            resolve({
-              ok: false,
-              output: stdout,
-              error: stderr || `ollama signin exited with code ${code}`,
-            });
-          }
-        });
-      } catch (err) {
-        resolve({
-          ok: false,
-          output: '',
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    });
-  });
+  // Signing in links this machine's Ollama key to an ollama.com account;
+  // after that the local daemon routes cloud-only models (gpt-oss:120b, …)
+  // through Turbo, so no extra API plumbing is needed here.
+  ipcMain.handle(CHANNELS.OLLAMA_CLOUD_STATUS, () => getCloudStatus(client.host));
 
-  ipcMain.handle(CHANNELS.OLLAMA_CLOUD_STATUS, async () => {
-    return new Promise<{ signedIn: boolean; user: string; error?: string }>((resolve) => {
-      try {
-        const proc = spawn('ollama', ['whoami'], { windowsHide: true, shell: false });
-        let stdout = '';
-        let stderr = '';
-        proc.stdout?.on('data', (b) => { stdout += b.toString(); });
-        proc.stderr?.on('data', (b) => { stderr += b.toString(); });
-        proc.on('error', () => resolve({ signedIn: false, user: '' }));
-        proc.on('close', (code) => {
-          if (code !== 0) {
-            // `whoami` exits non-zero when not signed in.
-            resolve({ signedIn: false, user: '', error: stderr.trim() || undefined });
-            return;
-          }
-          const user = stdout.trim().split('\n').pop() ?? '';
-          resolve({ signedIn: user.length > 0, user });
+  ipcMain.handle(CHANNELS.OLLAMA_CLOUD_SIGNIN, async () => {
+    const status = await getCloudStatus(client.host);
+    if (status.signedIn) return { ok: true, output: '', alreadySignedIn: true };
+    // Newer servers hand out the connect URL directly.
+    if (status.signinUrl) {
+      await shell.openExternal(status.signinUrl);
+      return { ok: true, output: 'Finish signing in in your browser.', url: status.signinUrl };
+    }
+    // Otherwise `ollama signin` prints it. It may keep running until the
+    // browser step completes, so answer as soon as the URL shows up.
+    return new Promise<{ ok: boolean; output: string; error?: string; url?: string }>((resolve) => {
+      let out = '';
+      let done = false;
+      const finish = (r: { ok: boolean; output: string; error?: string; url?: string }): void => {
+        if (done) return;
+        done = true;
+        resolve(r);
+      };
+      const bins = [
+        process.env['LOCALAPPDATA'] ? join(process.env['LOCALAPPDATA'], 'Programs', 'Ollama', 'ollama.exe') : '',
+      ].filter((p) => p && existsSync(p));
+      const proc = spawn(bins[0] ?? 'ollama', ['signin'], { windowsHide: true, shell: false });
+      const killer = setTimeout(() => proc.kill(), 5 * 60_000);
+      const onData = (b: Buffer): void => {
+        out += b.toString();
+        const url = extractSigninUrl(out);
+        if (url) {
+          void shell.openExternal(url);
+          finish({ ok: true, output: 'Finish signing in in your browser.', url });
+        }
+      };
+      proc.stdout?.on('data', onData);
+      proc.stderr?.on('data', onData);
+      proc.on('error', (err) => {
+        clearTimeout(killer);
+        finish({
+          ok: false,
+          output: out,
+          error: /ENOENT/.test(err.message)
+            ? 'Ollama is not installed (or not on PATH) — install it from ollama.com/download.'
+            : err.message,
         });
-      } catch (err) {
-        resolve({ signedIn: false, user: '', error: err instanceof Error ? err.message : String(err) });
-      }
+      });
+      proc.on('close', (code) => {
+        clearTimeout(killer);
+        const text = out.trim();
+        if (code === 0) finish({ ok: true, output: text || 'Sign-in finished.' });
+        else finish({ ok: false, output: text, error: text || `ollama signin exited with code ${code}` });
+      });
     });
   });
 
@@ -164,11 +153,18 @@ export function registerOllamaHandlers(client: OllamaClient, provider: LLMProvid
         const proc = spawn('ollama', ['signout'], { windowsHide: true, shell: false });
         let stderr = '';
         proc.stderr?.on('data', (b) => { stderr += b.toString(); });
-        proc.on('error', (err) => resolve({ ok: false, error: err.message }));
+        proc.on('error', (err) =>
+          resolve({
+            ok: false,
+            error: /ENOENT/.test(err.message)
+              ? 'Ollama is not installed (or not on PATH).'
+              : err.message,
+          }),
+        );
         proc.on('close', (code) =>
           code === 0
             ? resolve({ ok: true })
-            : resolve({ ok: false, error: stderr || `exit ${code}` }),
+            : resolve({ ok: false, error: stderr.trim() || `ollama signout exited with code ${code}` }),
         );
       } catch (err) {
         resolve({ ok: false, error: err instanceof Error ? err.message : String(err) });

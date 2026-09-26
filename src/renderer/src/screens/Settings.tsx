@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type JSX } from 'react';
 import { ipc } from '../lib/ipc';
+import { ipcErrorMessage } from '../lib/ipc-error';
+import type { OllamaCloudStatusResponse } from '@shared/ipc-channels';
 import { ShortcutsList } from '../chat/ShortcutsModal';
 import { McpServersCard } from './McpServersCard';
 import { DevToolsSettings } from './DevToolsSettings';
@@ -733,41 +735,69 @@ function CloudConnector({
 }
 
 function OllamaCloudCard({ onSaved }: { onSaved: (msg: string) => void }): JSX.Element {
-  const [status, setStatus] = useState<{ signedIn: boolean; user: string; error?: string } | null>(
-    null,
-  );
+  const [status, setStatus] = useState<OllamaCloudStatusResponse | null>(null);
   const [working, setWorking] = useState(false);
   const [log, setLog] = useState<string | null>(null);
+  const pollRef = useRef<number | null>(null);
 
-  const refresh = async (): Promise<void> => {
+  const refresh = async (): Promise<OllamaCloudStatusResponse | null> => {
     try {
       const r = await ipc.ollama.cloudStatus();
       setStatus(r);
+      return r;
     } catch (err) {
-      setStatus({
-        signedIn: false,
-        user: '',
-        error: err instanceof Error ? err.message : String(err),
-      });
+      setStatus({ signedIn: false, user: '', error: ipcErrorMessage(err) });
+      return null;
     }
   };
 
   useEffect(() => {
     void refresh();
+    return () => {
+      if (pollRef.current !== null) window.clearInterval(pollRef.current);
+    };
   }, []);
+
+  // After handing the user the ollama.com connect page, watch for the account
+  // to appear (up to 3 minutes) instead of claiming success up front.
+  function pollUntilSignedIn(): void {
+    if (pollRef.current !== null) window.clearInterval(pollRef.current);
+    const until = Date.now() + 3 * 60_000;
+    pollRef.current = window.setInterval(() => {
+      void refresh().then((r) => {
+        if (r?.signedIn) {
+          window.clearInterval(pollRef.current!);
+          pollRef.current = null;
+          setLog('Signed in. Cloud models can now be pulled from the library below.');
+          onSaved('Signed in to Ollama cloud.');
+        } else if (Date.now() > until) {
+          window.clearInterval(pollRef.current!);
+          pollRef.current = null;
+          setLog('Still not signed in — finish the ollama.com step, then press Sign in again.');
+        }
+      });
+    }, 3000);
+  }
 
   async function signin(): Promise<void> {
     setWorking(true);
-    setLog('Opening browser for Ollama sign-in…');
+    setLog('Starting Ollama sign-in…');
     try {
       const res = await ipc.ollama.cloudSignin();
-      if (res.ok) {
-        setLog('Signed in. Cloud models are now available via `ollama pull`.');
-        onSaved('Signed in to Ollama cloud.');
+      if (res.alreadySignedIn) {
+        setLog('Already signed in.');
+        await refresh();
+      } else if (res.ok && res.url) {
+        setLog('Opened ollama.com in your browser — approve this device there. This updates on its own.');
+        pollUntilSignedIn();
+      } else if (res.ok) {
+        setLog(res.output || 'Sign-in finished.');
         await refresh();
       } else {
         setLog(res.error || 'Sign-in failed.');
       }
+    } catch (err) {
+      setLog(ipcErrorMessage(err));
     } finally {
       setWorking(false);
     }
@@ -856,6 +886,11 @@ function OllamaCloudCard({ onSaved }: { onSaved: (msg: string) => void }): JSX.E
           {log ? (
             <div className="text-[11px] muted" aria-live="polite">
               {log}
+            </div>
+          ) : null}
+          {status?.note ? (
+            <div className="text-[11px] muted" aria-live="polite">
+              {status.note}
             </div>
           ) : null}
           {status?.error ? (

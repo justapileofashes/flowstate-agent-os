@@ -452,12 +452,17 @@ export const schemas = {
     ok: z.boolean(),
     output: z.string().default(''),
     error: z.string().optional(),
+    /** The ollama.com page opened in the browser to finish signing in. */
+    url: z.string().optional(),
+    alreadySignedIn: z.boolean().optional(),
   }),
   ollamaCloudStatusRequest: z.object({}),
   ollamaCloudStatusResponse: z.object({
     signedIn: z.boolean(),
     user: z.string().default(''),
     error: z.string().optional(),
+    note: z.string().optional(),
+    signinUrl: z.string().optional(),
   }),
   ollamaCloudSignoutRequest: z.object({}),
   ollamaCloudSignoutResponse: z.object({ ok: z.boolean(), error: z.string().optional() }),
