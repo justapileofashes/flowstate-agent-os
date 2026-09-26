@@ -526,7 +526,7 @@ export function App(): JSX.Element {
             transition={TRANSITION_DEFAULT}
           >
             {view.kind === 'settings' ? (
-              <Settings />
+              <Settings onOpenConnectors={() => setView({ kind: 'connectors' })} />
             ) : view.kind === 'models' ? (
               <Models onAgentsChanged={() => void refreshAgents()} />
             ) : view.kind === 'brain' ? (

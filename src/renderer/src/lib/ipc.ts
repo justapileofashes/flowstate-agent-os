@@ -162,6 +162,10 @@ interface FlowstateApi {
     list: () => Promise<McpListResponse>;
     save: (servers: McpServerDto[]) => Promise<{ ok: boolean }>;
     test: (server: McpServerDto) => Promise<McpTestResultDto>;
+    /** Search the official MCP Registry (latest versions, installable ones only). */
+    registrySearch: (
+      query: string,
+    ) => Promise<{ entries: import('@shared/mcp-registry').RegistryEntryDto[]; error?: string }>;
     subscribeStatus: (cb: (payload: McpStatusBroadcast) => void) => () => void;
   };
   plugins: {

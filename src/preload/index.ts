@@ -291,6 +291,10 @@ const api = {
       ipcRenderer.invoke(CHANNELS.MCP_SAVE, { servers }),
     test: (server: McpServerDto): Promise<McpTestResultDto> =>
       ipcRenderer.invoke(CHANNELS.MCP_TEST, { server }),
+    registrySearch: (
+      query: string,
+    ): Promise<{ entries: import('@shared/mcp-registry').RegistryEntryDto[]; error?: string }> =>
+      ipcRenderer.invoke(CHANNELS.MCP_REGISTRY_SEARCH, { query }),
     subscribeStatus: (cb: (payload: McpStatusBroadcast) => void): (() => void) => {
       const handler = (_e: Electron.IpcRendererEvent, payload: McpStatusBroadcast): void =>
         cb(payload);

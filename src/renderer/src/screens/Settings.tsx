@@ -82,7 +82,7 @@ interface State {
   saveStatus: string | null;
 }
 
-export function Settings(): JSX.Element {
+export function Settings({ onOpenConnectors }: { onOpenConnectors?: () => void } = {}): JSX.Element {
   const [state, setState] = useState<State>({
     ollama: null,
     workspacesDir: '',
@@ -370,7 +370,23 @@ export function Settings(): JSX.Element {
 
       <SchedulesCard />
 
-      <McpServersCard />
+      <section className="settings-section">
+        <div className="head">
+          <h3>MCP servers</h3>
+          <span className="muted text-xs">
+            Presets, the MCP Registry, custom commands and JSON import all live in Connectors.
+          </span>
+        </div>
+        {onOpenConnectors ? (
+          <div>
+            <button type="button" className="btn btn-sm" onClick={onOpenConnectors}>
+              Open Connectors →
+            </button>
+          </div>
+        ) : (
+          <McpServersCard />
+        )}
+      </section>
 
       <NotificationsSection />
 

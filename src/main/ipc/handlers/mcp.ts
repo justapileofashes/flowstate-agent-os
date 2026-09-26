@@ -5,6 +5,7 @@ import type { McpManager } from '@main/services/mcp-manager';
 import type { SettingsService } from '@main/services/settings-service';
 import type { McpServerConfig } from '@main/services/mcp-client';
 import { SecretStore, electronSafeStorageBackend } from '@main/services/secret-store';
+import { searchMcpRegistry } from '@main/services/mcp-registry-client';
 
 const SETTINGS_KEY = 'mcp_servers';
 
@@ -132,5 +133,15 @@ export function registerMcpHandlers(deps: {
     if (server.env) cfg.env = server.env;
     if (server.cwd) cfg.cwd = server.cwd;
     return deps.manager.testServer(cfg);
+  });
+
+  // Connectors → MCP Registry tab.
+  ipcMain.handle(CHANNELS.MCP_REGISTRY_SEARCH, async (_e, raw) => {
+    const { query } = schemas.mcpRegistrySearchRequest.parse(raw ?? {});
+    try {
+      return { entries: await searchMcpRegistry(query ?? '') };
+    } catch (err) {
+      return { entries: [], error: err instanceof Error ? err.message : String(err) };
+    }
   });
 }

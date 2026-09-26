@@ -46,6 +46,7 @@ export const CHANNELS = {
   MCP_LIST: 'mcp:list',
   MCP_SAVE: 'mcp:save',
   MCP_TEST: 'mcp:test',
+  MCP_REGISTRY_SEARCH: 'mcp:registry-search',
   MCP_STATUS: 'mcp:status',
   FLOWCLAW_LIST: 'flowclaw:list',
   FLOWCLAW_SAVE: 'flowclaw:save',
@@ -631,6 +632,7 @@ export const schemas = {
     ),
   }),
   mcpSaveResponse: z.object({ ok: z.boolean() }),
+  mcpRegistrySearchRequest: z.object({ query: z.string().max(200).optional() }),
   mcpTestRequest: z.object({
     server: z.object({
       id: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,30}$/i),
