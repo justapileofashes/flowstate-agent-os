@@ -578,6 +578,13 @@ const api = {
     toggle: (id: string, enabled: boolean) =>
       ipcRenderer.invoke(CHANNELS.ROUTINES_TOGGLE, { id, enabled }),
     runNow: (id: string) => ipcRenderer.invoke(CHANNELS.ROUTINES_RUN_NOW, { id }),
+    /** A routine ran (possibly in the background) and opened a new chat. */
+    onFired: (cb: (payload: { id: string; chatId: string }) => void): (() => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, payload: { id: string; chatId: string }): void =>
+        cb(payload);
+      ipcRenderer.on('routines:fired', handler);
+      return () => ipcRenderer.removeListener('routines:fired', handler);
+    },
   },
   zoom: {
     saveCreds: (creds: { accountId: string; clientId: string; clientSecret: string }) =>

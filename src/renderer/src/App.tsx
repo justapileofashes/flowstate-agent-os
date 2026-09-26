@@ -233,7 +233,12 @@ export function App(): JSX.Element {
         return next;
       });
     });
-    return unsubscribe;
+    // Background routines open new chats; show them in the sidebar right away.
+    const offRoutine = ipc.routines.onFired(() => void refreshRecentChats());
+    return () => {
+      unsubscribe();
+      offRoutine();
+    };
   }, [refreshRecentChats]);
 
   useEffect(() => {

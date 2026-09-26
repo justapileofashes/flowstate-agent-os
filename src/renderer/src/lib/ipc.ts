@@ -363,6 +363,7 @@ interface FlowstateApi {
     toggle: (id: string, enabled: boolean) =>
       Promise<import('@shared/ipc-channels').RoutinesToggleResponse>;
     runNow: (id: string) => Promise<import('@shared/ipc-channels').RoutinesRunNowResponse>;
+    onFired: (cb: (payload: { id: string; chatId: string }) => void) => () => void;
   };
   zoom: {
     saveCreds: (creds: {
