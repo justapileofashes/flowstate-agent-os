@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { ipcMain, shell } from 'electron';
 import { broadcast } from '@main/util/broadcast';
 import { extractSigninUrl, getCloudStatus } from '@main/services/ollama-cloud';
+import { fetchOllamaLibrary, type LibraryModel } from '@main/services/ollama-library';
 import {
   CHANNELS,
   ollamaPullEndChannel,
@@ -233,98 +234,3 @@ function spawnDetached(cmd: string, args: string[]): Promise<string | null> {
   });
 }
 
-interface LibraryModel {
-  name: string;
-  description: string;
-  pullCount: string;
-  tagCount: number;
-  sizes: string[];
-  capabilities: string[];
-  updatedAt: string;
-}
-
-/** Scrape https://ollama.com/library (server-rendered HTML) and parse out
- *  one entry per <li> block on the listing. Resilient to small markup
- *  changes — falls back to the model anchor href if structured fields are
- *  missing. Updated as of 2026-05. */
-async function fetchOllamaLibrary(): Promise<LibraryModel[]> {
-  const res = await fetch('https://ollama.com/library?sort=popular', {
-    headers: {
-      'User-Agent':
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
-      Accept: 'text/html,application/xhtml+xml',
-      'Accept-Language': 'en-US,en;q=0.9',
-    },
-  });
-  if (!res.ok) throw new Error(`Ollama library returned ${res.status}`);
-  const html = await res.text();
-  const blocks = html.split(/<li[\s>]/i).slice(1);
-  const out: LibraryModel[] = [];
-  const seen = new Set<string>();
-  for (const blk of blocks) {
-    // Each <li> contains the model's listing card. Extract by href first.
-    const hrefMatch = blk.match(/href="\/library\/([^"/]+)"/);
-    if (!hrefMatch) continue;
-    const name = hrefMatch[1]!.toLowerCase();
-    if (seen.has(name)) continue;
-    seen.add(name);
-
-    const descMatch = blk.match(/<p[^>]*>([\s\S]*?)<\/p>/);
-    const description = descMatch ? stripHtmlInline(descMatch[1]!).slice(0, 220) : '';
-
-    // Capability badges (tools, vision, embedding, ...).
-    const capabilities = [...blk.matchAll(/x-test-capability[^>]*>([^<]+)</g)].map((m) =>
-      m[1]!.trim().toLowerCase(),
-    );
-
-    // Size variants like 7b, 13b, 70b, 405b.
-    const sizes = [...blk.matchAll(/x-test-size[^>]*>([^<]+)</g)].map((m) => m[1]!.trim());
-
-    const pulls = blk.match(/x-test-pull-count[^>]*>([^<]+)</);
-    const tagCountMatch = blk.match(/x-test-tag-count[^>]*>([^<]+)</);
-    const updated = blk.match(/x-test-updated[^>]*>([^<]+)</);
-
-    out.push({
-      name,
-      description,
-      pullCount: pulls ? pulls[1]!.trim() : '',
-      tagCount: tagCountMatch ? Number(tagCountMatch[1]!.replace(/[^0-9]/g, '')) || 0 : 0,
-      sizes,
-      capabilities,
-      updatedAt: updated ? updated[1]!.trim() : '',
-    });
-  }
-  // Older HTML structure fallback: scrape model names directly.
-  if (out.length === 0) {
-    const anchorRe = /href="\/library\/([a-z0-9._-]+)"/gi;
-    let m: RegExpExecArray | null;
-    while ((m = anchorRe.exec(html)) !== null) {
-      const name = m[1]!.toLowerCase();
-      if (seen.has(name)) continue;
-      seen.add(name);
-      out.push({
-        name,
-        description: '',
-        pullCount: '',
-        tagCount: 0,
-        sizes: [],
-        capabilities: [],
-        updatedAt: '',
-      });
-    }
-  }
-  return out;
-}
-
-function stripHtmlInline(s: string): string {
-  return s
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&nbsp;/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
