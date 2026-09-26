@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { ipc } from '../lib/ipc';
+import { ipcErrorMessage } from '../lib/ipc-error';
 import type {
   ModelsCatalogResponse,
   CatalogModelDto,
@@ -21,6 +22,7 @@ interface DownloadState {
 export function Models(): JSX.Element {
   const [data, setData] = useState<ModelsCatalogResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [filter, setFilter] = useState<FilterTag>('all');
   const [showAll, setShowAll] = useState(false);
   const [downloads, setDownloads] = useState<Record<string, DownloadState>>({});
@@ -31,9 +33,13 @@ export function Models(): JSX.Element {
 
   const refresh = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const res = await ipc.models.catalog();
       setData(res);
+    } catch (err) {
+      // Used to leave the screen on "Scanning your hardware…" forever.
+      setLoadError(ipcErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -60,13 +66,14 @@ export function Models(): JSX.Element {
           }));
         },
         (end) => {
-          if (end.ok) {
+          if (end.ok || /abort/i.test(end.error ?? '')) {
+            // Finished, or cancelled by the user — back to the Download button.
             setDownloads((d) => {
               const next = { ...d };
               delete next[id];
               return next;
             });
-            void refresh();
+            if (end.ok) void refresh();
           } else {
             setDownloads((d) => ({
               ...d,
@@ -94,10 +101,22 @@ export function Models(): JSX.Element {
   if (loading || !data) {
     return (
       <div className="h-full overflow-y-auto px-8 py-10 max-w-7xl mx-auto">
-        <div className="text-sm text-[var(--ink-muted)]">Scanning your hardware…</div>
+        {loadError && !loading ? (
+          <div className="col gap-2" style={{ alignItems: 'flex-start' }}>
+            <div className="text-sm" style={{ color: 'var(--bad)' }}>
+              Couldn’t load the model catalog: {loadError}
+            </div>
+            <button type="button" className="btn btn-sm" onClick={() => void refresh()}>
+              Retry
+            </button>
+          </div>
+        ) : (
+          <div className="text-sm text-[var(--ink-muted)]">Scanning your hardware…</div>
+        )}
       </div>
     );
   }
+  const anyInstalled = data.catalog.some((c) => c.installed);
 
   const { hardware, catalog, recommendations } = data;
   const recIds = new Set(
@@ -167,7 +186,9 @@ export function Models(): JSX.Element {
           <div className="mt-3 border-t border-[var(--border)] pt-3">
             {autoAssign.matches.filter((m) => m.changed).length === 0 ? (
               <div className="text-xs text-[var(--ink-muted)]">
-                All agents already on a good fit.
+                {anyInstalled && autoAssign.matches.length > 0
+                  ? 'All agents already on a good fit.'
+                  : 'Nothing to assign — no local models found. Start Ollama, or download a model below first.'}
               </div>
             ) : (
               <ul className="text-xs space-y-1.5">
@@ -464,27 +485,42 @@ function LibraryRow({
           <span className="muted text-xs">latest</span>
         )}
       </div>
-      <div className="row" style={{ justifyContent: 'flex-end' }}>
+      <div className="col" style={{ alignItems: 'flex-end', gap: 4 }}>
         {download?.status === 'downloading' ? (
-          <div style={{ minWidth: 140 }}>
-            <div className="model-bar">
-              <div className="bar">
-                <div className="fill" style={{ width: `${download.pct}%`, background: 'var(--accent)' }} />
+          <div className="row gap-2" style={{ alignItems: 'center' }}>
+            <div style={{ minWidth: 100 }}>
+              <div className="model-bar">
+                <div className="bar">
+                  <div className="fill" style={{ width: `${download.pct}%`, background: 'var(--accent)' }} />
+                </div>
+              </div>
+              <div className="muted text-xs mt-1" style={{ textAlign: 'right' }}>
+                {download.pct}%
               </div>
             </div>
-            <div className="muted text-xs mt-1" style={{ textAlign: 'right' }}>
-              {download.pct}%
-            </div>
+            {download.cancel ? (
+              <button type="button" className="btn btn-sm btn-ghost" onClick={download.cancel}>
+                Cancel
+              </button>
+            ) : null}
           </div>
         ) : (
-          <button
-            type="button"
-            className="btn btn-sm btn-primary"
-            onClick={() => onDownload(targetTag)}
-            title={`ollama pull ${targetTag}`}
-          >
-            Pull {targetTag.length > 22 ? targetTag.slice(0, 20) + '…' : targetTag}
-          </button>
+          <>
+            {download?.status === 'error' ? (
+              <span className="text-xs" style={{ color: 'var(--bad)', textAlign: 'right' }} title={download.error}>
+                {download.error}
+              </span>
+            ) : null}
+            <button
+              type="button"
+              className="btn btn-sm btn-primary"
+              onClick={() => onDownload(targetTag)}
+              title={`ollama pull ${targetTag}`}
+            >
+              {download?.status === 'error' ? 'Retry ' : 'Pull '}
+              {targetTag.length > 22 ? targetTag.slice(0, 20) + '…' : targetTag}
+            </button>
+          </>
         )}
       </div>
     </div>
@@ -648,27 +684,37 @@ function ModelBarRow({
       </div>
       <div className="row" style={{ justifyContent: 'flex-end' }}>
         {installed ? (
-          <button type="button" className="btn btn-sm" disabled>
-            Manage
-          </button>
+          <span className="muted text-xs">ready to use</span>
         ) : download?.status === 'downloading' ? (
-          <div style={{ minWidth: 140 }}>
-            <div className="model-bar">
-              <div className="bar">
-                <div
-                  className="fill"
-                  style={{ width: `${download.pct}%`, background: 'var(--accent)' }}
-                />
+          <div className="row gap-2" style={{ alignItems: 'center' }}>
+            <div style={{ minWidth: 120 }}>
+              <div className="model-bar">
+                <div className="bar">
+                  <div
+                    className="fill"
+                    style={{ width: `${download.pct}%`, background: 'var(--accent)' }}
+                  />
+                </div>
+              </div>
+              <div className="muted text-xs mt-1" style={{ textAlign: 'right' }}>
+                {download.pct}%
               </div>
             </div>
-            <div className="muted text-xs mt-1" style={{ textAlign: 'right' }}>
-              {download.pct}%
-            </div>
+            {download.cancel ? (
+              <button type="button" className="btn btn-sm btn-ghost" onClick={download.cancel}>
+                Cancel
+              </button>
+            ) : null}
           </div>
         ) : download?.status === 'error' ? (
-          <button type="button" className="btn btn-sm btn-primary" onClick={onDownload}>
-            Retry
-          </button>
+          <div className="col" style={{ alignItems: 'flex-end', gap: 4, maxWidth: 260 }}>
+            <span className="text-xs" style={{ color: 'var(--bad)', textAlign: 'right' }} title={download.error}>
+              {download.error}
+            </span>
+            <button type="button" className="btn btn-sm btn-primary" onClick={onDownload}>
+              Retry
+            </button>
+          </div>
         ) : (
           <button
             type="button"

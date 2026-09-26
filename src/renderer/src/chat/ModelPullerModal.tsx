@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { motion } from 'framer-motion';
 import { ipc } from '../lib/ipc';
+import { ipcErrorMessage } from '../lib/ipc-error';
 import { modalBackdrop, modalPanel } from '../lib/motion';
 
 interface Props {
@@ -51,6 +52,11 @@ export function ModelPullerModal({ models, onClose }: Props): JSX.Element {
         )
         .then(({ cancel }) => {
           setState(model, { cancel });
+        })
+        .catch((err: unknown) => {
+          // A rejected start used to leave "pull all" waiting forever.
+          setState(model, { status: 'error', message: ipcErrorMessage(err) });
+          resolve();
         });
     });
   }

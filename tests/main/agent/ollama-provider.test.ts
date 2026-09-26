@@ -108,6 +108,29 @@ describe('OllamaProvider.chatStream', () => {
     await expect(collect(p.chatStream(baseOpts))).rejects.toThrow(/500/);
   });
 
+  it('includes Ollama\'s error body in HTTP failures', async () => {
+    const fetchMock = vi.fn(
+      async () => new Response(JSON.stringify({ error: 'model "nope" not found, try pulling it first' }), { status: 404 }),
+    );
+    const p = new OllamaProvider('http://localhost:11434', fetchMock);
+    await expect(collect(p.chatStream(baseOpts))).rejects.toThrow(/404: model "nope" not found/);
+  });
+
+  it('throws on a mid-stream {"error"} line instead of ignoring it', async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          ndjsonStream([
+            JSON.stringify({ message: { content: 'par' }, done: false }),
+            JSON.stringify({ error: 'model runner has unexpectedly stopped' }),
+          ]),
+          { status: 200 },
+        ),
+    );
+    const p = new OllamaProvider('http://localhost:11434', fetchMock);
+    await expect(collect(p.chatStream(baseOpts))).rejects.toThrow(/unexpectedly stopped/);
+  });
+
   it('throws if response body is missing', async () => {
     const fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
     const p = new OllamaProvider('http://localhost:11434', fetchMock);
@@ -156,6 +179,23 @@ describe('OllamaProvider.chatStream', () => {
     const ctrl = new AbortController();
     await collect(p.chatStream({ ...baseOpts, signal: ctrl.signal }));
     expect(fetchMock.mock.calls[0]?.[1]?.signal).toBe(ctrl.signal);
+  });
+});
+
+describe('OllamaProvider.pullModel', () => {
+  it('fails the pull when Ollama streams an error line (was reported as success)', async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          ndjsonStream([
+            JSON.stringify({ status: 'pulling manifest' }),
+            JSON.stringify({ error: 'pull model manifest: file does not exist' }),
+          ]),
+          { status: 200 },
+        ),
+    );
+    const p = new OllamaProvider('http://localhost:11434', fetchMock);
+    await expect(collect(p.pullModel('nope:1b'))).rejects.toThrow(/file does not exist/);
   });
 });
 

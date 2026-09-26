@@ -25,10 +25,29 @@ interface OllamaChatChunk {
   done?: boolean;
   prompt_eval_count?: number;
   eval_count?: number;
+  /** Ollama reports failures mid-stream as an `{ "error": … }` line. */
+  error?: string;
 }
 
 interface OllamaTagsResponse {
   models?: Array<{ name: string; size?: number }>;
+}
+
+/** Error for a non-OK Ollama response, including its `{ error }` body. */
+async function httpError(res: Response, what: string): Promise<Error> {
+  let detail = '';
+  try {
+    const text = await res.text();
+    try {
+      detail = (JSON.parse(text) as { error?: string }).error ?? text;
+    } catch {
+      detail = text;
+    }
+  } catch {
+    // body unreadable — status alone
+  }
+  detail = detail.trim().slice(0, 300);
+  return new Error(`Ollama ${what} HTTP ${res.status}${detail ? `: ${detail}` : ''}`);
 }
 
 const MIN_CTX = 8192;
@@ -97,7 +116,7 @@ export class OllamaProvider implements LLMProvider {
     });
 
     if (!res.ok) {
-      throw new Error(`Ollama chat HTTP ${res.status}`);
+      throw await httpError(res, 'chat');
     }
     if (!res.body) {
       throw new Error('Ollama chat response had no body');
@@ -124,6 +143,7 @@ export class OllamaProvider implements LLMProvider {
           } catch {
             continue;
           }
+          if (chunk.error) throw new Error(`Ollama: ${chunk.error}`);
 
           const text = chunk.message?.content ?? '';
           if (text.length > 0) {
@@ -172,7 +192,7 @@ export class OllamaProvider implements LLMProvider {
       body: JSON.stringify(body),
       signal: opts.signal,
     });
-    if (!res.ok) throw new Error(`Ollama chat HTTP ${res.status}`);
+    if (!res.ok) throw await httpError(res, 'chat');
     const parsed = (await res.json()) as { message?: { content?: string } };
     return { text: parsed.message?.content ?? '' };
   }
@@ -200,7 +220,7 @@ export class OllamaProvider implements LLMProvider {
       body: JSON.stringify({ model: name, stream: true }),
       signal,
     });
-    if (!res.ok) throw new Error(`Ollama pull HTTP ${res.status}`);
+    if (!res.ok) throw await httpError(res, 'pull');
     if (!res.body) throw new Error('Ollama pull response had no body');
 
     const reader = res.body.getReader();
@@ -217,12 +237,16 @@ export class OllamaProvider implements LLMProvider {
           const line = buf.slice(0, nl).trim();
           buf = buf.slice(nl + 1);
           if (!line) continue;
+          let chunk: PullProgress & { error?: string };
           try {
-            const chunk = JSON.parse(line) as PullProgress;
-            yield chunk;
+            chunk = JSON.parse(line) as PullProgress & { error?: string };
           } catch {
             continue;
           }
+          // e.g. {"error":"pull model manifest: file does not exist"} — used
+          // to be passed through as "progress" and reported as a success.
+          if (chunk.error) throw new Error(chunk.error);
+          yield chunk;
         }
       }
     } finally {
