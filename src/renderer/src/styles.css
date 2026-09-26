@@ -2582,6 +2582,10 @@ select.field { appearance: none; cursor: pointer;
 }
 .term-cwd { color: var(--ink-faint); font-size: 11px; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .term-actions { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+/* xterm.js host: fills the panel; xterm sizes its canvas to this box. */
+.term-xterm { flex: 1 1 auto; min-height: 0; padding: 8px 4px 8px 12px; background: #0a0908; overflow: hidden; }
+.term-xterm .xterm { height: 100%; }
+.term-xterm .xterm-viewport { background: #0a0908 !important; }
 .term-ctl {
   appearance: none;
   border: 0;

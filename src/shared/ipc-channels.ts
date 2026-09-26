@@ -163,6 +163,7 @@ export const CHANNELS = {
   TERMINAL_START: 'terminal:start',
   TERMINAL_INPUT: 'terminal:input',
   TERMINAL_KILL: 'terminal:kill',
+  TERMINAL_RESIZE: 'terminal:resize',
   TERMINAL_DATA: 'terminal:data',
   TERMINAL_EXIT: 'terminal:exit',
 } as const;
@@ -644,10 +645,17 @@ export const schemas = {
   terminalStartRequest: z.object({
     id: z.string().trim().min(1).max(80),
     cwd: z.string().trim().min(1).max(1000),
+    cols: z.number().int().min(1).max(1000).optional(),
+    rows: z.number().int().min(1).max(1000).optional(),
   }),
   terminalInputRequest: z.object({
     id: z.string().trim().min(1).max(80),
-    data: z.string().max(10000),
+    data: z.string().max(100_000),
+  }),
+  terminalResizeRequest: z.object({
+    id: z.string().trim().min(1).max(80),
+    cols: z.number().int().min(1).max(1000),
+    rows: z.number().int().min(1).max(1000),
   }),
   terminalKillRequest: z.object({ id: z.string().trim().min(1).max(80) }),
 

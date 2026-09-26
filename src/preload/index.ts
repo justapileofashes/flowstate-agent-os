@@ -331,10 +331,16 @@ const api = {
     },
   },
   terminal: {
-    start: (id: string, cwd: string): Promise<{ ok: boolean }> =>
-      ipcRenderer.invoke(CHANNELS.TERMINAL_START, { id, cwd }),
+    start: (
+      id: string,
+      cwd: string,
+      size?: { cols: number; rows: number },
+    ): Promise<{ ok: boolean; pty: boolean }> =>
+      ipcRenderer.invoke(CHANNELS.TERMINAL_START, { id, cwd, ...(size ?? {}) }),
     input: (id: string, data: string): Promise<{ ok: boolean }> =>
       ipcRenderer.invoke(CHANNELS.TERMINAL_INPUT, { id, data }),
+    resize: (id: string, cols: number, rows: number): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke(CHANNELS.TERMINAL_RESIZE, { id, cols, rows }),
     kill: (id: string): Promise<{ ok: boolean }> =>
       ipcRenderer.invoke(CHANNELS.TERMINAL_KILL, { id }),
     onData: (cb: (payload: TerminalDataBroadcast) => void): (() => void) => {

@@ -183,8 +183,13 @@ interface FlowstateApi {
     subscribeStatus: (cb: (payload: PluginsStatusBroadcast) => void) => () => void;
   };
   terminal: {
-    start: (id: string, cwd: string) => Promise<{ ok: boolean }>;
+    start: (
+      id: string,
+      cwd: string,
+      size?: { cols: number; rows: number },
+    ) => Promise<{ ok: boolean; pty: boolean }>;
     input: (id: string, data: string) => Promise<{ ok: boolean }>;
+    resize: (id: string, cols: number, rows: number) => Promise<{ ok: boolean }>;
     kill: (id: string) => Promise<{ ok: boolean }>;
     onData: (cb: (payload: TerminalDataBroadcast) => void) => () => void;
     onExit: (cb: (payload: TerminalExitBroadcast) => void) => () => void;

@@ -11,9 +11,14 @@ files:
   - "node_modules/better-sqlite3/**"
   - "node_modules/bindings/**"
   - "node_modules/file-uri-to-path/**"
+  # Terminal PTY (ConPTY on Windows): native addon + worker + OpenConsole.exe.
+  # Loaded at runtime from app.asar.unpacked (src/main/ipc/handlers/terminal.ts).
+  - "node_modules/@lydell/**"
+  - "!node_modules/@lydell/**/*.pdb"
 asar: true
 asarUnpack:
   - "node_modules/better-sqlite3/**"
+  - "node_modules/@lydell/**"
 # Native modules come from prebuilds (scripts/sqlite-bindings.mjs installs the
 # Electron + Node better-sqlite3 binaries side by side under lib/binding/), so
 # electron-builder must not rebuild them: its rebuild recreates build/Release
