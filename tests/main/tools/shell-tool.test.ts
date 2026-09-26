@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, basename } from 'node:path';
-import { runShell } from '@main/tools/shell-tool';
+import { buildEnv, resolveWindowsCommand, runShell } from '@main/tools/shell-tool';
 
 let workspace: string;
 
@@ -85,5 +85,49 @@ describe('runShell', () => {
       workspace,
     );
     expect(r.stdout).toContain(basename(workspace));
+  });
+});
+
+describe('buildEnv', () => {
+  it('keeps allow-listed vars whatever their casing (Windows: Path, ComSpec, windir)', () => {
+    const env = buildEnv({ Path: 'C:\\bin', ComSpec: 'C:\\cmd.exe', windir: 'C:\\Windows', APPDATA: 'x', SECRET_TOKEN: 's' });
+    expect(env).toEqual({ Path: 'C:\\bin', ComSpec: 'C:\\cmd.exe', windir: 'C:\\Windows', APPDATA: 'x' });
+  });
+});
+
+describe.runIf(process.platform === 'win32')('runShell on Windows', () => {
+  it('runs npm through its .cmd shim', async () => {
+    const r = await runShell('npm --version', workspace);
+    expect(r.ok).toBe(true);
+    expect(r.stdout.trim()).toMatch(/^\d+\.\d+/);
+  }, 30_000);
+
+  it('runs npx through its .cmd shim', async () => {
+    const r = await runShell('npx --version', workspace);
+    expect(r.ok).toBe(true);
+  }, 30_000);
+
+  it('runs cmd built-ins like dir', async () => {
+    const r = await runShell('dir /b', workspace);
+    expect(r.ok).toBe(true);
+    expect(r.stdout).toContain('README.md');
+  });
+
+  it('runs a local .cmd script with a spaced argument', async () => {
+    writeFileSync(join(workspace, 'say.cmd'), '@echo off\r\necho [%~1]\r\n');
+    const r = await runShell('say "hello world"', workspace);
+    expect(r.ok).toBe(true);
+    expect(r.stdout.trim()).toBe('[hello world]');
+  });
+
+  it('refuses cmd metacharacters in arguments of a .cmd shim', async () => {
+    const r = await runShell('npm --version "&calc"', workspace);
+    expect(r.ok).toBe(false);
+    expect(r.stderr).toMatch(/metachar/i);
+  });
+
+  it('resolves .exe on PATH directly (no cmd wrapper)', () => {
+    const t = resolveWindowsCommand('node', process.env, workspace);
+    expect(t.kind).toBe('exe');
   });
 });

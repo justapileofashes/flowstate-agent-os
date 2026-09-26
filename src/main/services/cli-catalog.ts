@@ -237,7 +237,8 @@ export function buildCliContext(connected: DetectedCli[]): string {
   return (
     '\n\n## Connected coding CLIs\n' +
     'These AI coding CLIs are installed on this machine and available to you via ' +
-    'the run_shell tool (use their non-interactive / one-shot flags when delegating).\n' +
+    'the run_shell tool. run_shell has no terminal, so always use their one-shot ' +
+    'flags (e.g. `claude -p "…"`, `codex exec "…"`, `gemini -p "…"`, `opencode run "…"`).\n' +
     lines
   );
 }
