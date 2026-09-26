@@ -304,6 +304,10 @@ interface FlowstateApi {
     vscode: (absolutePath: string) => Promise<{ ok: boolean }>;
     url: (url: string) => Promise<{ ok: boolean }>;
   };
+  preview: {
+    /** Serve agent HTML from the isolated flowstate-preview: scheme. */
+    register: (html: string) => Promise<{ url: string }>;
+  };
   cloud: {
     test: (
       provider: 'anthropic' | 'openai' | 'gemini' | 'perplexity' | 'groq' | 'mistral' | 'xai',

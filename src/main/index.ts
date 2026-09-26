@@ -50,6 +50,12 @@ import { SEED_AGENTS } from './seed-agents';
 import { registerIpcHandlers } from './ipc/register';
 import { getConnectedClis } from './ipc/handlers/clis';
 import { decideNotification } from './services/notify';
+import {
+  PREVIEW_SCHEME,
+  installPreviewProtocol,
+  isPreviewUrl,
+  registerPreviewScheme,
+} from './services/preview-protocol';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 
@@ -169,6 +175,7 @@ function installContentSecurityPolicy(): void {
     "img-src 'self' data: https:",
     "font-src 'self' data:",
     `connect-src ${connectSrc}`,
+    `frame-src 'self' ${PREVIEW_SCHEME}:`,
     "object-src 'none'",
     "base-uri 'none'",
     "form-action 'none'",
@@ -176,6 +183,11 @@ function installContentSecurityPolicy(): void {
   ].join('; ');
 
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    // Previews carry their own CSP and must stay frameable.
+    if (isPreviewUrl(details.url)) {
+      callback({ responseHeaders: details.responseHeaders ?? {} });
+      return;
+    }
     callback({
       responseHeaders: {
         ...details.responseHeaders,
@@ -189,8 +201,11 @@ function showFatalDialog(title: string, message: string): void {
   dialog.showErrorBox(title, message);
 }
 
+registerPreviewScheme();
+
 app.whenReady().then(async () => {
   installContentSecurityPolicy();
+  installPreviewProtocol();
   initAutoUpdate();
   try {
     db = openDatabase(databasePath());

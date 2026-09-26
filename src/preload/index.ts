@@ -520,6 +520,10 @@ const api = {
     url: (url: string): Promise<{ ok: boolean }> =>
       ipcRenderer.invoke(CHANNELS.SHELL_OPEN_URL, { url }),
   },
+  preview: {
+    register: (html: string): Promise<{ url: string }> =>
+      ipcRenderer.invoke(CHANNELS.PREVIEW_REGISTER, { html }),
+  },
   cloud: {
     test: (
       provider: 'anthropic' | 'openai' | 'gemini' | 'perplexity' | 'groq' | 'mistral' | 'xai',

@@ -23,6 +23,7 @@ export const CHANNELS = {
   SHELL_OPEN_PATH: 'shell:open-path',
   SHELL_OPEN_VSCODE: 'shell:open-vscode',
   SHELL_OPEN_URL: 'shell:open-url',
+  PREVIEW_REGISTER: 'preview:register',
   CLOUD_TEST_CONNECTION: 'cloud:test-connection',
   OLLAMA_PULL: 'ollama:pull',
   OLLAMA_PULL_CANCEL: 'ollama:pull-cancel',
@@ -383,6 +384,7 @@ export const schemas = {
   shellOpenVscodeResponse: z.object({ ok: z.boolean() }),
   shellOpenUrlRequest: z.object({ url: z.string().url() }),
   shellOpenUrlResponse: z.object({ ok: z.boolean() }),
+  previewRegisterRequest: z.object({ html: z.string().max(10_000_000) }),
   cloudTestConnectionRequest: z.object({
     provider: z.enum(['anthropic', 'openai', 'gemini', 'perplexity', 'groq', 'mistral', 'xai']),
   }),

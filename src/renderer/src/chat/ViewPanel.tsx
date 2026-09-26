@@ -3,8 +3,10 @@
 // 'plan' / 'artifact') pulls its data from the chat message list and
 // renders a self-contained pane with its own header + close button.
 
-import { useState, type JSX } from 'react';
+import { useEffect, useState, type JSX } from 'react';
 import type { MessageDto } from '@shared/chat-types';
+import { ipc } from '../lib/ipc';
+import { ipcErrorMessage } from '../lib/ipc-error';
 import { MarkdownText } from './MarkdownText';
 import type { ChatView } from './ViewsButton';
 
@@ -71,14 +73,7 @@ function renderBody(view: ChatView, messages: MessageDto[]): JSX.Element {
   if (view === 'artifact') {
     const art = extractLatestArtifact(messages);
     if (!art) return <Empty label="No HTML/SVG artifact. Ask the agent for ```html or ```svg." />;
-    return (
-      <iframe
-        title="Artifact preview"
-        sandbox="allow-scripts"
-        srcDoc={wrapArtifact(art)}
-        className="w-full h-full border-0 bg-[var(--bg)]"
-      />
-    );
+    return <PreviewFrame html={wrapArtifact(art)} />;
   }
 
   if (view === 'changes') {
@@ -253,6 +248,37 @@ function extractLatestArtifact(messages: MessageDto[]): Artifact | null {
     if (/^<svg[\s>]/i.test(t)) return { language: 'svg', source: t };
   }
   return null;
+}
+
+/**
+ * Sandboxed preview of agent HTML. Loaded from the flowstate-preview: scheme,
+ * not srcdoc: a srcdoc frame inherits the app's CSP, which blocks every
+ * script (inline or CDN) in the packaged build.
+ */
+function PreviewFrame({ html }: { html: string }): JSX.Element {
+  const [url, setUrl] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    setUrl(null);
+    ipc.preview
+      .register(html)
+      .then((r) => alive && setUrl(r.url))
+      .catch((e: unknown) => alive && setError(ipcErrorMessage(e)));
+    return () => {
+      alive = false;
+    };
+  }, [html]);
+  if (error) return <Empty label={`Preview failed: ${error}`} />;
+  if (!url) return <Empty label="Loading preview…" />;
+  return (
+    <iframe
+      title="Artifact preview"
+      sandbox="allow-scripts"
+      src={url}
+      className="w-full h-full border-0 bg-[var(--bg)]"
+    />
+  );
 }
 
 function wrapArtifact(art: Artifact): string {
