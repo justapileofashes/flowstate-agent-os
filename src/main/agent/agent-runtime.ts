@@ -16,6 +16,12 @@ export interface AgentRuntimeOpts {
   dispatcher: ToolDispatcher;
   maxToolCallsPerTurn?: number;
   history?: ConversationMessage[];
+  /**
+   * Throw provider errors that happen before anything was emitted instead of
+   * turning them into a `turn-done` error event, so the caller can fail over
+   * to another model (AgentSession's fallback chain).
+   */
+  throwBeforeOutput?: boolean;
 }
 
 const DEFAULT_MAX_TOOL_CALLS = 25;
@@ -27,8 +33,10 @@ export class AgentRuntime {
   private readonly tools: ToolSpec[];
   private readonly dispatcher: ToolDispatcher;
   private readonly maxToolCallsPerTurn: number;
+  private readonly throwBeforeOutput: boolean;
 
   constructor(opts: AgentRuntimeOpts) {
+    this.throwBeforeOutput = opts.throwBeforeOutput ?? false;
     this.provider = opts.provider;
     this.model = opts.model;
     this.tools = opts.tools;
@@ -64,6 +72,7 @@ export class AgentRuntime {
     signal?: AbortSignal,
   ): AsyncIterable<AgentEvent> {
     let toolCallsThisTurn = 0;
+    let emitted = false;
 
     try {
       for (;;) {
@@ -92,6 +101,7 @@ export class AgentRuntime {
           }
           if (delta.type === 'text') {
             assistantText += delta.text;
+            emitted = true;
             yield { type: 'text-delta', text: delta.text };
           } else if (delta.type === 'tool-call') {
             pendingCalls.push({
@@ -140,6 +150,7 @@ export class AgentRuntime {
             yield { type: 'turn-done', reason: 'max-tools' };
             return;
           }
+          emitted = true;
           yield { type: 'tool-call', call };
 
           const result = await this.dispatcher.call(call.id, call.name, call.args);
@@ -158,6 +169,7 @@ export class AgentRuntime {
         yield { type: 'turn-done', reason: 'aborted' };
         return;
       }
+      if (this.throwBeforeOutput && !emitted) throw err;
       const msg = err instanceof Error ? err.message : String(err);
       yield { type: 'turn-done', reason: 'error', error: msg };
     }

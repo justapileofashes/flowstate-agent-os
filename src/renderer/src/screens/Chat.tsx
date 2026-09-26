@@ -376,6 +376,7 @@ export function Chat({ agent, openChatId, pendingChat, onChatActivity, onNav }: 
               messages={stream.messages}
               streaming={stream.streamingAssistant}
               agent={agent}
+              error={stream.status === 'error' ? stream.error : null}
             />
             <Composer
               disabled={false}

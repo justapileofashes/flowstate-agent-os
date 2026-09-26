@@ -185,14 +185,14 @@ const api = {
     subscribeToStream: (
       streamId: string,
       onEvent: (event: unknown) => void,
-      onEnd: (payload: { reason: string }) => void,
+      onEnd: (payload: { reason: string; error?: string }) => void,
     ): (() => void) => {
       const evtChannel = chatEventChannel(streamId);
       const endChannel = chatEventEndChannel(streamId);
       const onEvtRaw = (_e: Electron.IpcRendererEvent, payload: unknown) => {
         onEvent(payload);
       };
-      const onEndRaw = (_e: Electron.IpcRendererEvent, payload: { reason: string }) => {
+      const onEndRaw = (_e: Electron.IpcRendererEvent, payload: { reason: string; error?: string }) => {
         onEnd(payload);
         ipcRenderer.removeListener(evtChannel, onEvtRaw);
         ipcRenderer.removeListener(endChannel, onEndRaw);

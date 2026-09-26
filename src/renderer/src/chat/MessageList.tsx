@@ -6,11 +6,61 @@ import { ToolCallCard } from './ToolCallCard';
 import { MarkdownText } from './MarkdownText';
 import { AgentAvatar } from '../lib/agent-icons';
 import { ProcessTimeline } from './ProcessTimeline';
+import { ipc } from '../lib/ipc';
 
 interface Props {
   messages: MessageDto[];
   streaming: StreamingAssistant | null;
   agent?: AgentDto;
+  /** Why the last turn failed; shown inline under the conversation. */
+  error?: string | null;
+}
+
+function TurnError({ error }: { error: string }): JSX.Element {
+  const [starting, setStarting] = useState<'idle' | 'busy' | string>('idle');
+  const offline = /Ollama is offline/i.test(error);
+  return (
+    <div
+      className="msg"
+      role="alert"
+      style={{
+        border: '1px solid var(--bad)',
+        borderRadius: 8,
+        padding: '10px 12px',
+        background: 'var(--surface-2)',
+      }}
+    >
+      <div className="body">
+        <div className="role" style={{ color: 'var(--bad)' }}>
+          couldn’t get a reply
+        </div>
+        <div className="text" style={{ marginTop: 4 }}>
+          {error}
+        </div>
+        {offline ? (
+          <div className="row gap-2" style={{ marginTop: 8, alignItems: 'center' }}>
+            <button
+              type="button"
+              className="btn btn-sm btn-primary"
+              disabled={starting === 'busy'}
+              onClick={() => {
+                setStarting('busy');
+                void ipc.ollama
+                  .start()
+                  .then((r) => setStarting(r.ok ? 'Starting Ollama — send your message again in a few seconds.' : r.error ?? 'Could not start Ollama.'))
+                  .catch(() => setStarting('Could not start Ollama.'));
+              }}
+            >
+              {starting === 'busy' ? 'Starting…' : 'Start Ollama'}
+            </button>
+            {starting !== 'idle' && starting !== 'busy' ? (
+              <span className="muted text-xs">{starting}</span>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
 }
 
 /** Pretty human label for what the agent is currently doing, derived from
@@ -51,7 +101,7 @@ function shorten(s: string, max = 40): string {
   return s.length > max ? '…' + s.slice(-max + 1) : s;
 }
 
-export function MessageList({ messages, streaming, agent }: Props): JSX.Element {
+export function MessageList({ messages, streaming, agent, error }: Props): JSX.Element {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const pinnedRef = useRef(true);
   // Replay mode: cursor is an index into the visible (non-tool) message
@@ -169,6 +219,7 @@ export function MessageList({ messages, streaming, agent }: Props): JSX.Element 
             </div>
           </div>
         ) : null}
+        {!isReplaying && !streaming && error ? <TurnError error={error} /> : null}
       </div>
     </div>
   );

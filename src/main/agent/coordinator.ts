@@ -11,6 +11,7 @@
 import { randomUUID } from 'node:crypto';
 import type { LLMProvider } from './llm-provider';
 import { AgentRuntime } from './agent-runtime';
+import { describeModelError } from './model-errors';
 import { ToolDispatcher } from './tool-dispatcher';
 import { loadConstitution } from './constitution';
 import { FileTools } from '@main/tools';
@@ -238,7 +239,7 @@ export class Coordinator {
         emit({
           type: 'run-end',
           reason: 'error',
-          error: `Planner failed: ${err instanceof Error ? err.message : String(err)}`,
+          error: `Planner failed: ${describeModelError(err instanceof Error ? err.message : String(err), this.opts.plannerModel)}`,
         });
         return;
       }

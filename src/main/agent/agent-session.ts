@@ -3,6 +3,7 @@ import type { ToolDispatcher } from './tool-dispatcher';
 import type { AgentEvent, ConversationMessage, ToolCall, ToolSpec } from './types';
 import { AgentRuntime } from './agent-runtime';
 import { resolveModelChain, pickNextModel, isRetryableModelError } from './model-fallback';
+import { describeModelError } from './model-errors';
 import type {
   AgentRow,
   ChatRow,
@@ -88,6 +89,7 @@ export class AgentSession {
     const persisted: Pending[] = [];
     let currentAssistant: PendingAssistant | null = null;
     let lastReason: string = 'end';
+    let lastError: string | undefined;
 
     const closeAssistant = (): void => {
       if (currentAssistant !== null) {
@@ -107,11 +109,16 @@ export class AgentSession {
           tools: this.toolSpecs,
           dispatcher: this.dispatcher,
           history: this.history,
+          throwBeforeOutput: true,
         });
         let emitted = 0;
         try {
-          for await (const event of runtime.send(userText, this.abortController.signal) as AsyncIterable<AgentEvent>) {
+          for await (let event of runtime.send(userText, this.abortController.signal) as AsyncIterable<AgentEvent>) {
             emitted++;
+            if (event.type === 'turn-done' && event.reason === 'error') {
+              lastError = describeModelError(event.error ?? 'unknown error', activeModel);
+              event = { ...event, error: lastError };
+            }
             this.send(chatEventChannel(this.streamId), event);
 
             switch (event.type) {
@@ -185,7 +192,12 @@ export class AgentSession {
             activeModel = next;
             continue;
           }
-          throw err;
+          // Out of fallbacks: end the turn with a readable error instead of
+          // letting it escape (which never sent the end event).
+          lastReason = 'error';
+          lastError = describeModelError(err instanceof Error ? err.message : String(err), activeModel);
+          this.send(chatEventChannel(this.streamId), { type: 'turn-done', reason: 'error', error: lastError });
+          break;
         }
       }
 
@@ -208,7 +220,10 @@ export class AgentSession {
         }
       }
 
-      this.send(chatEventEndChannel(this.streamId), { reason: lastReason });
+      this.send(chatEventEndChannel(this.streamId), {
+        reason: lastReason,
+        ...(lastError ? { error: lastError } : {}),
+      });
     } finally {
       this.onComplete?.();
     }

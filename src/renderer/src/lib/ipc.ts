@@ -117,7 +117,7 @@ interface FlowstateApi {
     subscribeToStream: (
       streamId: string,
       onEvent: (event: unknown) => void,
-      onEnd: (payload: { reason: string }) => void,
+      onEnd: (payload: { reason: string; error?: string }) => void,
     ) => () => void;
     listModels: () => Promise<ChatListModelsResponse>;
     createAgent: (input: ChatCreateAgentRequest) => Promise<ChatCreateAgentResponse>;

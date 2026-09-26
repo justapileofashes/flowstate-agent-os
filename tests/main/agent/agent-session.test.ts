@@ -141,6 +141,51 @@ describe('AgentSession — error', () => {
   });
 });
 
+describe('AgentSession — model fallback', () => {
+  it('fails over to the next model when the primary errors before any output', async () => {
+    const tried: string[] = [];
+    class FlakyProvider extends FakeProvider {
+      async *chatStream(opts: { model: string }): AsyncGenerator<ProviderDelta> {
+        tried.push(opts.model);
+        if (tried.length === 1) throw new Error('fetch failed');
+        yield { type: 'text', text: 'from backup' };
+        yield { type: 'done' };
+      }
+    }
+    const approvalGate = new ApprovalGate(send, 50);
+    const manager = new AgentSessionManager({
+      provider: new FlakyProvider([]),
+      repo,
+      approvalGate,
+      send,
+      getFallbackModels: () => ['backup-model:7b'],
+    });
+    const { streamId, session } = await manager.start(chatId);
+    await session.run('hello');
+
+    expect(tried[1]).toBe('backup-model:7b');
+    const ms = repo.getMessages(chatId);
+    expect(ms.map((m) => m.role)).toEqual(['user', 'assistant']);
+    expect(ms[1]?.content).toBe('from backup');
+    const end = events.find((e) => e.channel === chatEventEndChannel(streamId));
+    expect(end?.payload).toMatchObject({ reason: 'end' });
+  });
+
+  it('ends with a readable error (not a thrown one) when no fallback is left', async () => {
+    class DownProvider extends FakeProvider {
+      async *chatStream(): AsyncGenerator<ProviderDelta> {
+        throw new Error('fetch failed');
+      }
+    }
+    const manager = buildManager(new DownProvider([]));
+    const { streamId, session } = await manager.start(chatId);
+    await session.run('hello');
+    const end = events.find((e) => e.channel === chatEventEndChannel(streamId));
+    expect(end?.payload).toMatchObject({ reason: 'error' });
+    expect((end?.payload as { error?: string }).error).toMatch(/Ollama is offline/);
+  });
+});
+
 describe('AgentSession — history rebuild', () => {
   it('passes prior persisted messages to the provider', async () => {
     repo.appendMessage(chatId, { role: 'user', content: 'earlier' });
