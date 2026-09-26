@@ -1,5 +1,5 @@
 // IPC glue for the Stocks screen. Thin over the tested services: MarketDataService
-// (Stooq fetch + cache) and analyzeSymbol (deterministic multi-factor analysis).
+// (Yahoo fetch + cache) and analyzeSymbol (deterministic multi-factor analysis).
 import { app, ipcMain } from 'electron';
 import { join } from 'node:path';
 import { CHANNELS, schemas } from '@shared/ipc-channels';
@@ -14,12 +14,7 @@ export function registerStocksHandlers(deps: {
   settings: SettingsService;
 }): void {
   const cacheDir = join(app.getPath('userData'), 'market-cache');
-  const market = new MarketDataService({
-    cacheDir,
-    ...(deps.settings.get('alpha_vantage_key')
-      ? { alphaVantageKey: deps.settings.get('alpha_vantage_key')! }
-      : {}),
-  });
+  const market = new MarketDataService({ cacheDir });
 
   ipcMain.handle(CHANNELS.STOCKS_QUOTE, async (_e, raw) => {
     const { symbol } = schemas.stocksSymbolRequest.parse(raw);

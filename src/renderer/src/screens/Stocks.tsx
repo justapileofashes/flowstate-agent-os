@@ -5,9 +5,9 @@
 // All data via the typed ipc.stocks.* surface.
 //
 // Educational analysis — NOT financial advice (persistent banner).
-// Free tier: chrome renders behind a locked overlay; no IPC is called.
 import { useEffect, useRef, useState, type JSX } from 'react';
 import { ipc } from '../lib/ipc';
+import { ipcErrorMessage } from '../lib/ipc-error';
 import { AiTrader } from './trader/AiTrader';
 import type {
   StockAnalysisResponse,
@@ -86,6 +86,7 @@ type Quotes = Record<string, StockQuoteResponse>;
 function StkWatchlist({
   symbols,
   quotes,
+  quoteErrors,
   selected,
   onSelect,
   onAdd,
@@ -93,6 +94,7 @@ function StkWatchlist({
 }: {
   symbols: string[];
   quotes: Quotes;
+  quoteErrors: Record<string, string>;
   selected: string | null;
   onSelect: (s: string) => void;
   onAdd: (s: string) => void;
@@ -138,7 +140,13 @@ function StkWatchlist({
             >
               <div style={{ minWidth: 0 }}>
                 <div className="stk-wrow-sym">{sym}</div>
-                <div className="stk-wrow-px">{q ? fmtPx(q.price) : 'loading…'}</div>
+                <div
+                  className="stk-wrow-px"
+                  title={quoteErrors[sym]}
+                  style={!q && quoteErrors[sym] ? { color: 'var(--bad)' } : undefined}
+                >
+                  {q ? fmtPx(q.price) : quoteErrors[sym] ? 'unavailable' : 'loading…'}
+                </div>
               </div>
               <div className="stk-wrow-right">
                 <button
@@ -390,7 +398,7 @@ function StkDetailWithSide({
       })
       .catch((err: unknown) => {
         if (reqRef.current === myReq) {
-          setError(err instanceof Error ? err.message : String(err));
+          setError(ipcErrorMessage(err));
           setLoading(false);
           setRiskUpdating(false);
         }
@@ -628,6 +636,7 @@ export function Stocks(): JSX.Element {
   const [view, setView] = useState<'analyze' | 'autopilot'>('analyze');
   const [symbols, setSymbols] = useState<string[]>([]);
   const [quotes, setQuotes] = useState<Quotes>({});
+  const [quoteErrors, setQuoteErrors] = useState<Record<string, string>>({});
   const [selected, setSelected] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
 
@@ -659,8 +668,10 @@ export function Stocks(): JSX.Element {
         try {
           const q = await ipc.stocks.quote(sym);
           if (alive) setQuotes((prev) => ({ ...prev, [sym]: q }));
-        } catch {
-          /* skip bad symbol quote */
+        } catch (err) {
+          // Show it on the row instead of leaving it on "loading…" forever;
+          // selecting the row retries through the detail panel.
+          if (alive) setQuoteErrors((prev) => ({ ...prev, [sym]: ipcErrorMessage(err) }));
         }
       }
     })();
@@ -688,8 +699,15 @@ export function Stocks(): JSX.Element {
     });
     if (selected === sym) setSelected(next[0] ?? null);
   };
-  const onQuote = (sym: string, q: StockQuoteResponse): void =>
+  const onQuote = (sym: string, q: StockQuoteResponse): void => {
     setQuotes((prev) => ({ ...prev, [sym]: q }));
+    setQuoteErrors((prev) => {
+      if (!(sym in prev)) return prev;
+      const c = { ...prev };
+      delete c[sym];
+      return c;
+    });
+  };
 
   return (
     <div className="stocks-page">
@@ -719,6 +737,7 @@ export function Stocks(): JSX.Element {
         <StkWatchlist
           symbols={symbols}
           quotes={quotes}
+          quoteErrors={quoteErrors}
           selected={selected}
           onSelect={setSelected}
           onAdd={addSymbol}

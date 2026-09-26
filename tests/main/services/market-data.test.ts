@@ -6,12 +6,38 @@ import {
   MarketDataService,
   MarketDataError,
   normalizeSymbol,
+  toYahooSymbol,
 } from '../../../src/main/services/market-data';
 
-const CSV = `Date,Open,High,Low,Close,Volume
-2024-01-02,10,11,9,10.5,1000
-2024-01-03,10.5,12,10,11.5,1200
-2024-01-04,11.5,12.5,11,12,900`;
+// Three recent daily bars (UTC 14:30 opens) in Yahoo chart-API shape.
+const now = Date.now();
+const day = 86_400_000;
+const ts = [now - 3 * day, now - 2 * day, now - day].map((t) => Math.floor(t / 1000));
+function chart(): unknown {
+  return {
+    chart: {
+      error: null,
+      result: [
+        {
+          timestamp: ts,
+          indicators: {
+            quote: [
+              {
+                open: [10, 10.5, 11.5],
+                high: [11, 12, 12.5],
+                low: [9, 10, 11],
+                close: [10.5, 11.5, 12],
+                volume: [1000, 1200, 900],
+              },
+            ],
+          },
+        },
+      ],
+    },
+  };
+}
+const ok = (body: unknown): Response =>
+  new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
 
 let dir: string;
 beforeEach(() => {
@@ -31,28 +57,77 @@ describe('normalizeSymbol', () => {
   });
 });
 
+describe('toYahooSymbol', () => {
+  it('maps user symbols to Yahoo ticker syntax', () => {
+    expect(toYahooSymbol('aapl')).toBe('AAPL');
+    expect(toYahooSymbol('AAPL.US')).toBe('AAPL');
+    expect(toYahooSymbol('BTCUSD')).toBe('BTC-USD');
+    expect(toYahooSymbol('ethusdt')).toBe('ETH-USDT');
+    expect(toYahooSymbol('eurusd')).toBe('EURUSD=X');
+    expect(toYahooSymbol('brk.b')).toBe('BRK-B');
+    expect(toYahooSymbol('sap.de')).toBe('SAP.DE');
+    expect(toYahooSymbol('^spx')).toBe('^SPX');
+  });
+});
+
 describe('MarketDataService.history', () => {
-  it('parses Stooq CSV into oldest->newest bars', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response(CSV, { status: 200 })));
-    const svc = new MarketDataService({ cacheDir: dir });
+  it('parses the Yahoo chart into oldest->newest daily bars', async () => {
+    const fetchFn = vi.fn(async (_url: string) => ok(chart()));
+    const svc = new MarketDataService({ cacheDir: dir, fetchFn });
     const bars = await svc.history('AAPL', 'max');
     expect(bars).toHaveLength(3);
     expect(bars[0]!.close).toBe(10.5);
     expect(bars[2]!.high).toBe(12.5);
+    expect(bars[0]!.time).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(String(fetchFn.mock.calls[0]![0])).toContain('/v8/finance/chart/AAPL?');
+  });
+
+  it('requests the Yahoo ticker for crypto pairs', async () => {
+    const fetchFn = vi.fn(async (_url: string) => ok(chart()));
+    const svc = new MarketDataService({ cacheDir: dir, fetchFn });
+    await svc.history('BTCUSD', '1m');
+    expect(String(fetchFn.mock.calls[0]![0])).toContain('/chart/BTC-USD?');
   });
 
   it('serves the second call from cache (fetch called once)', async () => {
-    const spy = vi.fn(async () => new Response(CSV, { status: 200 }));
-    vi.stubGlobal('fetch', spy);
-    const svc = new MarketDataService({ cacheDir: dir });
+    const fetchFn = vi.fn(async () => ok(chart()));
+    const svc = new MarketDataService({ cacheDir: dir, fetchFn });
     await svc.history('AAPL', 'max');
     await svc.history('AAPL', 'max');
-    expect(spy).toHaveBeenCalledTimes(1);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
   });
 
-  it('throws unknown-symbol when Stooq returns the no-data marker', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('No data', { status: 200 })));
-    const svc = new MarketDataService({ cacheDir: dir });
-    await expect(svc.history('NOPE', 'max')).rejects.toBeInstanceOf(MarketDataError);
+  it('throws unknown-symbol when Yahoo reports no such ticker', async () => {
+    const fetchFn = vi.fn(async () =>
+      new Response(JSON.stringify({ chart: { result: null, error: { description: 'No data found, symbol may be delisted' } } }), { status: 404 }),
+    );
+    const svc = new MarketDataService({ cacheDir: dir, fetchFn });
+    const err = await svc.history('NOPE', 'max').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(MarketDataError);
+    expect((err as MarketDataError).kind).toBe('unknown-symbol');
+  });
+
+  it('throws unknown-symbol on an empty result', async () => {
+    const fetchFn = vi.fn(async () => ok({ chart: { error: null, result: [{ timestamp: [], indicators: { quote: [{}] } }] } }));
+    const svc = new MarketDataService({ cacheDir: dir, fetchFn });
+    await expect(svc.history('EMPTY', '1m')).rejects.toBeInstanceOf(MarketDataError);
+  });
+
+  it('maps network failures to a network MarketDataError', async () => {
+    const fetchFn = vi.fn(async () => {
+      throw new Error('fetch failed');
+    });
+    const svc = new MarketDataService({ cacheDir: dir, fetchFn });
+    const err = await svc.history('AAPL', '1m').catch((e: unknown) => e);
+    expect((err as MarketDataError).kind).toBe('network');
+  });
+});
+
+describe('MarketDataService.quote', () => {
+  it('derives price + change from the last two bars', async () => {
+    const svc = new MarketDataService({ cacheDir: dir, fetchFn: vi.fn(async () => ok(chart())) });
+    const q = await svc.quote('AAPL');
+    expect(q.price).toBe(12);
+    expect(q.change).toBeCloseTo(0.5);
   });
 });
