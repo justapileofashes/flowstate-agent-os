@@ -271,8 +271,8 @@ interface FlowstateApi {
     evaluateBudget: (chatId?: string) => Promise<BudgetEvaluateResponse>;
     getBudgetCaps: () => Promise<BudgetGetCapsResponse>;
     setBudgetCaps: (perChatUsd: number, perDayUsd: number) => Promise<{ ok: boolean }>;
-    resolveMentions: (agentId: string, text: string) => Promise<MentionsResolveResponse>;
-    loadProjectContext: (agentId: string) => Promise<ProjectContextLoadResponse>;
+    resolveMentions: (agentId: string, text: string, chatId?: string) => Promise<MentionsResolveResponse>;
+    loadProjectContext: (agentId: string, chatId?: string) => Promise<ProjectContextLoadResponse>;
     preflight: (
       text: string,
       contextChars?: number,
@@ -318,6 +318,13 @@ interface FlowstateApi {
   preview: {
     /** Serve agent HTML from the isolated flowstate-preview: scheme. */
     register: (html: string) => Promise<{ url: string }>;
+  };
+  dialogs: {
+    pickFolder: (opts?: { title?: string; defaultPath?: string }) => Promise<{ path: string | null }>;
+    pickFile: (opts?: {
+      title?: string;
+      filters?: Array<{ name: string; extensions: string[] }>;
+    }) => Promise<{ path: string | null }>;
   };
   cloud: {
     test: (

@@ -28,6 +28,8 @@ export const CHANNELS = {
   SHELL_OPEN_VSCODE: 'shell:open-vscode',
   SHELL_OPEN_URL: 'shell:open-url',
   PREVIEW_REGISTER: 'preview:register',
+  DIALOG_PICK_FOLDER: 'dialog:pick-folder',
+  DIALOG_PICK_FILE: 'dialog:pick-file',
   CLOUD_TEST_CONNECTION: 'cloud:test-connection',
   OLLAMA_PULL: 'ollama:pull',
   OLLAMA_PULL_CANCEL: 'ollama:pull-cancel',
@@ -390,6 +392,17 @@ export const schemas = {
   shellOpenUrlRequest: z.object({ url: z.string().url() }),
   shellOpenUrlResponse: z.object({ ok: z.boolean() }),
   previewRegisterRequest: z.object({ html: z.string().max(10_000_000) }),
+  dialogPickFolderRequest: z.object({
+    title: z.string().max(200).optional(),
+    defaultPath: z.string().max(1000).optional(),
+  }),
+  dialogPickFileRequest: z.object({
+    title: z.string().max(200).optional(),
+    filters: z
+      .array(z.object({ name: z.string().max(80), extensions: z.array(z.string().max(20)).max(20) }))
+      .max(10)
+      .optional(),
+  }),
   cloudTestConnectionRequest: z.object({
     provider: z.enum(['anthropic', 'openai', 'gemini', 'perplexity', 'groq', 'mistral', 'xai']),
   }),
@@ -892,14 +905,18 @@ export const schemas = {
   budgetSetCapsResponse: z.object({ ok: z.boolean() }),
 
   // --- @file mentions ---
-  mentionsResolveRequest: z.object({ agentId: z.string().min(1), text: z.string() }),
+  mentionsResolveRequest: z.object({
+    agentId: z.string().min(1),
+    text: z.string(),
+    chatId: z.string().min(1).optional(),
+  }),
   mentionsResolveResponse: z.object({
     paths: z.array(z.string()),
     contextBlock: z.string(),
   }),
 
   // --- Project conventions auto-context ---
-  projectContextLoadRequest: z.object({ agentId: z.string().min(1) }),
+  projectContextLoadRequest: z.object({ agentId: z.string().min(1), chatId: z.string().min(1).optional() }),
   projectContextLoadResponse: z.object({
     files: z.array(z.string()),
     preamble: z.string(),

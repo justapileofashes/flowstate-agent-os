@@ -22,6 +22,8 @@ interface Props {
   onNav?: (target: NavTarget) => void;
   agent?: AgentDto;
   chatId?: string;
+  /** The folder this chat works in (per-chat override or the agent's). */
+  workspacePath?: string;
 }
 
 export function Composer({
@@ -32,6 +34,7 @@ export function Composer({
   onNav,
   agent,
   chatId,
+  workspacePath,
 }: Props): JSX.Element {
   const [value, setValue] = useState('');
   const [dragOver, setDragOver] = useState(false);
@@ -66,11 +69,12 @@ export function Composer({
     void ipc.devtools.listCommands().then((r) => setCommands(r.commands));
   }, []);
 
+  const workspace = workspacePath || agent?.workspacePath;
   useEffect(() => {
-    if (!agent) return;
-    void ipc.files.list(agent.workspacePath).then((r) => setFiles(r.entries.filter((e) => e.kind === 'file').map((e) => e.name))).catch(() => {});
-    void ipc.devtools.loadProjectContext(agent.id).then(setConv).catch(() => {});
-  }, [agent]);
+    if (!agent || !workspace) return;
+    void ipc.files.list(workspace).then((r) => setFiles(r.entries.filter((e) => e.kind === 'file').map((e) => e.name))).catch(() => {});
+    void ipc.devtools.loadProjectContext(agent.id, chatId).then(setConv).catch(() => {});
+  }, [agent, workspace, chatId]);
 
   useEffect(() => {
     void ipc.devtools.evaluateBudget(chatId).then(setBudget).catch(() => {});
@@ -92,10 +96,10 @@ export function Composer({
     if (!agent) return;
     const id = setTimeout(() => {
       if (!/(^|\s)@\S/.test(value)) { setMentions({ paths: [], contextBlock: '' }); return; }
-      void ipc.devtools.resolveMentions(agent.id, value).then(setMentions).catch(() => {});
+      void ipc.devtools.resolveMentions(agent.id, value, chatId).then(setMentions).catch(() => {});
     }, 300);
     return () => clearTimeout(id);
-  }, [value, agent]);
+  }, [value, agent, chatId]);
 
   useEffect(() => {
     if (value.trim().length === 0) {

@@ -511,10 +511,10 @@ const api = {
       ipcRenderer.invoke(CHANNELS.BUDGET_GET_CAPS, {}),
     setBudgetCaps: (perChatUsd: number, perDayUsd: number): Promise<{ ok: boolean }> =>
       ipcRenderer.invoke(CHANNELS.BUDGET_SET_CAPS, { perChatUsd, perDayUsd }),
-    resolveMentions: (agentId: string, text: string): Promise<MentionsResolveResponse> =>
-      ipcRenderer.invoke(CHANNELS.MENTIONS_RESOLVE, { agentId, text }),
-    loadProjectContext: (agentId: string): Promise<ProjectContextLoadResponse> =>
-      ipcRenderer.invoke(CHANNELS.PROJECT_CONTEXT_LOAD, { agentId }),
+    resolveMentions: (agentId: string, text: string, chatId?: string): Promise<MentionsResolveResponse> =>
+      ipcRenderer.invoke(CHANNELS.MENTIONS_RESOLVE, { agentId, text, ...(chatId ? { chatId } : {}) }),
+    loadProjectContext: (agentId: string, chatId?: string): Promise<ProjectContextLoadResponse> =>
+      ipcRenderer.invoke(CHANNELS.PROJECT_CONTEXT_LOAD, { agentId, ...(chatId ? { chatId } : {}) }),
     preflight: (
       text: string,
       contextChars?: number,
@@ -548,6 +548,13 @@ const api = {
   preview: {
     register: (html: string): Promise<{ url: string }> =>
       ipcRenderer.invoke(CHANNELS.PREVIEW_REGISTER, { html }),
+  },
+  dialogs: {
+    pickFolder: (opts: { title?: string; defaultPath?: string } = {}): Promise<{ path: string | null }> =>
+      ipcRenderer.invoke(CHANNELS.DIALOG_PICK_FOLDER, opts),
+    pickFile: (
+      opts: { title?: string; filters?: Array<{ name: string; extensions: string[] }> } = {},
+    ): Promise<{ path: string | null }> => ipcRenderer.invoke(CHANNELS.DIALOG_PICK_FILE, opts),
   },
   cloud: {
     test: (

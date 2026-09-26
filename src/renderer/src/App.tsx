@@ -567,6 +567,20 @@ export function App(): JSX.Element {
                 agent={view.agent}
                 openChatId={view.openChatId ?? null}
                 activeStreams={activeStreams}
+                onAgentSaved={(saved) => {
+                  void refreshAgents();
+                  setView({
+                    kind: 'chat',
+                    agent: saved,
+                    ...(view.openChatId ? { openChatId: view.openChatId } : {}),
+                  });
+                }}
+                onAgentDeleted={() => {
+                  void refreshAgents();
+                  void refreshRecentChats();
+                  setDashboardKey((k) => k + 1);
+                  setView({ kind: 'dashboard' });
+                }}
                 onChatActivity={onChatActivity}
                 onNav={(target) => setView({ kind: target })}
                 pendingChat={

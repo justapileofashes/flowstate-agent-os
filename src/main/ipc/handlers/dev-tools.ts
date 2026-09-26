@@ -162,26 +162,33 @@ export function registerDevToolsHandlers(deps: Deps): void {
     });
   });
 
+  // The folder a chat's agent actually works in: the per-chat override
+  // (Chat header → workspace) wins over the agent's default.
+  const workspaceFor = (agentId: string, chatId?: string): string | undefined => {
+    const override = chatId ? settings.get(`chat_workspace_override:${chatId}`)?.trim() : '';
+    return override || repo.getAgent(agentId)?.workspacePath;
+  };
+
   // ---- @file mentions ----
   ipcMain.handle(CHANNELS.MENTIONS_RESOLVE, async (_e, raw) => {
-    const { agentId, text } = schemas.mentionsResolveRequest.parse(raw);
+    const { agentId, text, chatId } = schemas.mentionsResolveRequest.parse(raw);
     const paths = parseMentions(text);
-    const agent = repo.getAgent(agentId);
+    const workspace = workspaceFor(agentId, chatId);
     const files: MentionedFile[] = [];
     for (const p of paths) {
-      files.push({ path: p, content: await safeReadInWorkspace(agent?.workspacePath, p) });
+      files.push({ path: p, content: await safeReadInWorkspace(workspace, p) });
     }
     return { paths, contextBlock: buildContextBlock(files) };
   });
 
   // ---- Project conventions ----
   ipcMain.handle(CHANNELS.PROJECT_CONTEXT_LOAD, async (_e, raw) => {
-    const { agentId } = schemas.projectContextLoadRequest.parse(raw);
-    const agent = repo.getAgent(agentId);
-    if (!agent?.workspacePath) return { files: [], preamble: '' };
+    const { agentId, chatId } = schemas.projectContextLoadRequest.parse(raw);
+    const workspace = workspaceFor(agentId, chatId);
+    if (!workspace) return { files: [], preamble: '' };
     let present: string[] = [];
     try {
-      const entries = await readdir(agent.workspacePath);
+      const entries = await readdir(workspace);
       present = entries.filter((e) => (CONVENTION_FILES as readonly string[]).includes(e));
     } catch {
       return { files: [], preamble: '' };
@@ -189,7 +196,7 @@ export function registerDevToolsHandlers(deps: Deps): void {
     const picked = pickConventionFiles(present);
     const loaded: ConventionFile[] = [];
     for (const name of picked) {
-      const content = await safeReadInWorkspace(agent.workspacePath, name);
+      const content = await safeReadInWorkspace(workspace, name);
       if (content !== null) loaded.push({ name, content });
     }
     return { files: loaded.map((f) => f.name), preamble: buildConventionPreamble(loaded) };

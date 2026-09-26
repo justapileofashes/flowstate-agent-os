@@ -13,6 +13,8 @@ import { TerminalPanel } from '../chat/TerminalPanel';
 import { SnapshotsButton } from '../chat/SnapshotsButton';
 import { AuditButton } from '../chat/AuditButton';
 import { ExportRunButton } from '../chat/ExportRunButton';
+import { AgentFormModal } from '../chat/AgentFormModal';
+import { DeleteAgentModal } from '../chat/DeleteAgentModal';
 import type { NavTarget } from '../chat/slash-commands';
 import { AgentAvatar } from '../lib/agent-icons';
 import type { TokenUsage } from '../chat/useChatStream';
@@ -91,6 +93,10 @@ interface Props {
   onNav?: (target: NavTarget) => void;
   /** Every live stream in the app (chats, routines, team-run tasks). */
   activeStreams?: Array<{ streamId: string; agentId: string; chatId: string }>;
+  /** Enable "Edit agent"; called with the saved agent. */
+  onAgentSaved?: (agent: AgentDto) => void;
+  /** Enable "Delete agent"; called after it's gone. */
+  onAgentDeleted?: () => void;
 }
 
 export function Chat({
@@ -100,7 +106,10 @@ export function Chat({
   onChatActivity,
   onNav,
   activeStreams,
+  onAgentSaved,
+  onAgentDeleted,
 }: Props): JSX.Element {
+  const [agentModal, setAgentModal] = useState<'edit' | 'delete' | null>(null);
   const [activeChatId, setActiveChatId] = useState<string | null>(openChatId ?? null);
   const [filesOpen, setFilesOpen] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(false);
@@ -150,16 +159,24 @@ export function Chat({
     await ipc.settings.set(`chat_model_override:${activeChatId}`, next);
   }
 
+  // window.prompt() is not supported in Electron (it returned null, so this
+  // button silently did nothing); use the native folder picker.
   async function changeWorkspace(): Promise<void> {
     if (!activeChatId) return;
-    const next = prompt(
-      'Workspace path for this session (leave empty to use agent default):',
-      wsOverride || agent.workspacePath,
-    );
-    if (next === null) return;
+    const { path } = await ipc.dialogs.pickFolder({
+      title: 'Workspace for this session',
+      defaultPath: wsOverride || agent.workspacePath,
+    });
+    if (!path) return;
+    await setWorkspace(path === agent.workspacePath ? '' : path);
+  }
+
+  async function setWorkspace(next: string): Promise<void> {
+    if (!activeChatId) return;
     setWsOverride(next);
     await ipc.settings.set(`chat_workspace_override:${activeChatId}`, next);
   }
+  const effectiveWorkspace = wsOverride || agent.workspacePath;
 
   useEffect(() => {
     if (openChatId && openChatId !== activeChatId) {
@@ -306,6 +323,23 @@ export function Chat({
                 >
                   {wsOverride ? 'workspace·custom' : 'workspace'}
                 </button>
+                {wsOverride ? (
+                  <button
+                    type="button"
+                    onClick={() => void setWorkspace('')}
+                    title={`Back to the agent's workspace (${agent.workspacePath})`}
+                    style={{
+                      background: 'transparent',
+                      border: 0,
+                      color: 'var(--ink-faint)',
+                      fontSize: 11,
+                      cursor: 'pointer',
+                      padding: 0,
+                    }}
+                  >
+                    ×
+                  </button>
+                ) : null}
                 <span>· {agent.specialtyTags.join(' · ') || 'plan'}</span>
               </div>
             ) : null}
@@ -383,8 +417,51 @@ export function Chat({
             </svg>
             <span>New</span>
           </button>
+          {onAgentSaved ? (
+            <button
+              type="button"
+              title="Edit this agent (name, prompt, model, tools, skills)"
+              className="btn btn-sm btn-ghost"
+              onClick={() => setAgentModal('edit')}
+            >
+              <span>Edit agent</span>
+            </button>
+          ) : null}
+          {onAgentDeleted ? (
+            <button
+              type="button"
+              title="Delete this agent"
+              className="btn btn-sm btn-ghost"
+              onClick={() => setAgentModal('delete')}
+            >
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                <path d="M2.5 3.5h7 M4.5 3.5V2.5h3v1 M3.5 3.5l.5 6h4l.5-6" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+          ) : null}
         </div>
       </header>
+      {agentModal === 'edit' && onAgentSaved ? (
+        <AgentFormModal
+          mode="edit"
+          initial={agent}
+          onClose={() => setAgentModal(null)}
+          onSaved={(a) => {
+            setAgentModal(null);
+            onAgentSaved(a);
+          }}
+        />
+      ) : null}
+      {agentModal === 'delete' && onAgentDeleted ? (
+        <DeleteAgentModal
+          agent={agent}
+          onClose={() => setAgentModal(null)}
+          onDeleted={() => {
+            setAgentModal(null);
+            onAgentDeleted();
+          }}
+        />
+      ) : null}
 
       {activeChatId === null ? (
         <EmptyChatState onCreate={() => void handleNewChat()} />
@@ -410,6 +487,7 @@ export function Chat({
                   : stream.abort
               }
               agent={agent}
+              workspacePath={effectiveWorkspace}
               {...(activeChatId ? { chatId: activeChatId } : {})}
               {...(onNav ? { onNav } : {})}
             />
@@ -424,7 +502,7 @@ export function Chat({
             </div>
           ))}
           {filesOpen ? (
-            <FileBrowser workspacePath={agent.workspacePath} onClose={() => setFilesOpen(false)} />
+            <FileBrowser workspacePath={effectiveWorkspace} onClose={() => setFilesOpen(false)} />
           ) : null}
           {terminalOpen && activeChatId ? (
             <div
@@ -433,7 +511,7 @@ export function Chat({
             >
               <TerminalPanel
                 id={`term-${activeChatId}`}
-                cwd={agent.workspacePath}
+                cwd={effectiveWorkspace}
                 onClose={() => setTerminalOpen(false)}
               />
             </div>
