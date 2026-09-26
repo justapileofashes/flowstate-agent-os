@@ -32,11 +32,18 @@ describe('buildSkillToolSpec', () => {
 describe('HookRunner', () => {
   const ctx = { cwd: tmpdir(), toolName: 'run_shell', agentId: 'a1' };
 
-  it('blocks a PreToolUse tool call when the hook exits non-zero', async () => {
-    const hooks: HookEntry[] = [{ event: 'PreToolUse', command: 'exit 3', pluginId: 'p' }];
+  it('blocks a PreToolUse tool call when the hook exits 2 (Claude Code contract)', async () => {
+    const hooks: HookEntry[] = [{ event: 'PreToolUse', command: 'exit 2', pluginId: 'p' }];
     const runner = new HookRunner(() => hooks);
     const out = await runner.fire('PreToolUse', ctx);
     expect(out.blocked).toBe(true);
+  });
+
+  it('treats other non-zero exits as hook errors, not vetoes', async () => {
+    const hooks: HookEntry[] = [{ event: 'PreToolUse', command: 'exit 3', pluginId: 'p' }];
+    const runner = new HookRunner(() => hooks);
+    const out = await runner.fire('PreToolUse', ctx);
+    expect(out.blocked).toBe(false);
   });
 
   it('does not block when the hook exits zero', async () => {

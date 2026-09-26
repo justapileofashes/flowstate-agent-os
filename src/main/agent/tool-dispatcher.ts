@@ -179,7 +179,7 @@ export class ToolDispatcher {
 
     // Plugin PreToolUse hooks (consent-gated upstream) can veto a tool call.
     if (this.deps.hooks) {
-      const pre = await this.deps.hooks.fire('PreToolUse', this.hookContext(name));
+      const pre = await this.deps.hooks.fire('PreToolUse', { ...this.hookContext(name), toolInput: rawArgs });
       if (pre.blocked) {
         return failure(toolCallId, name, `Blocked by plugin hook: ${pre.reason ?? 'denied'}`);
       }
@@ -188,7 +188,7 @@ export class ToolDispatcher {
     const result = await this.callInner(toolCallId, name, rawArgs);
 
     if (this.deps.hooks) {
-      await this.deps.hooks.fire('PostToolUse', this.hookContext(name));
+      await this.deps.hooks.fire('PostToolUse', { ...this.hookContext(name), toolInput: rawArgs });
     }
     if (this.deps.audit && this.deps.agent) {
       this.deps.audit.toolCall(
