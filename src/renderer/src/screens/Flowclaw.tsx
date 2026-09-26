@@ -8,6 +8,7 @@ import { ipc } from '../lib/ipc';
 import { startSystemAudioCapture } from '../lib/capture';
 import type { AgentDto } from '@shared/chat-types';
 import type {
+  FlowclawAutomationDto,
   FlowclawConnectionDto,
   FlowclawConnectionInputDto,
   FlowclawSkillsListResponse,
@@ -402,6 +403,68 @@ function FcTaskRow({
         </button>
       </div>
       <span className="fc-task-chev">{FcIcon.chevron}</span>
+    </div>
+  );
+}
+
+/**
+ * Automations from the older Flowclaw scheduler. They keep running in the
+ * background (every minute tick) but had no UI, so they couldn't be seen or
+ * stopped. New recurring tasks are made in Routines.
+ */
+function FcLegacyAutomations({ connections }: { connections: FlowclawConnectionDto[] }): JSX.Element | null {
+  const [items, setItems] = useState<FlowclawAutomationDto[]>([]);
+  const refresh = useCallback(async () => {
+    try {
+      setItems((await ipc.flowclaw.listAutomations()).automations);
+    } catch {
+      // best-effort
+    }
+  }, []);
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+  if (items.length === 0) return null;
+  return (
+    <div style={{ marginTop: 18 }}>
+      <div className="eyebrow" style={{ marginBottom: 8 }}>
+        Older automations · still running in the background
+      </div>
+      {items.map((a) => (
+        <div key={a.id} className="card-2 fc-task">
+          <div className="fc-task-main">
+            <div className="fc-task-name">{a.label}</div>
+            <div className="fc-task-sub mono">
+              <span>{connections.find((c) => c.id === a.connectionId)?.label ?? a.connectionId}</span>
+              <span className="fc-dotsep">·</span>
+              <span>every {a.intervalMinutes} min</span>
+              {a.lastResult ? (
+                <>
+                  <span className="fc-dotsep">·</span>
+                  <span title={a.lastResult}>last: {a.lastResult.slice(0, 40)}</span>
+                </>
+              ) : null}
+            </div>
+          </div>
+          <div className="fc-task-meta">
+            <div className="fc-task-next">
+              <span className="faint">next</span> {a.enabled ? new Date(a.nextRunAt).toLocaleString() : '—'}
+            </div>
+            <button
+              className="btn btn-sm btn-ghost"
+              onClick={() => void ipc.flowclaw.toggleAutomation(a.id, !a.enabled).then(refresh)}
+            >
+              {a.enabled ? 'Pause' : 'Resume'}
+            </button>
+            <button
+              className="btn btn-sm btn-ghost"
+              onClick={() => void ipc.flowclaw.deleteAutomation(a.id).then(refresh)}
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -1784,6 +1847,7 @@ export function Flowclaw({
               onRunNow={(x) => void onRunNow(x)}
             />
           ))}
+          <FcLegacyAutomations connections={conns} />
         </div>
       )}
 

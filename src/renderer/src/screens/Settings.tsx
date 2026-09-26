@@ -368,10 +368,9 @@ export function Settings(): JSX.Element {
 
       <PersonasCard />
 
-      <section className="settings-section">
-        <div className="head"><h3>MCP servers</h3></div>
-        <McpServersCard />
-      </section>
+      <SchedulesCard />
+
+      <McpServersCard />
 
       <NotificationsSection />
 
@@ -1071,7 +1070,7 @@ function PersonasCard(): JSX.Element {
   );
 }
 
-function SchedulesCard(): JSX.Element {
+function SchedulesCard(): JSX.Element | null {
   const [items, setItems] = useState<
     Array<{
       id: string;
@@ -1084,28 +1083,16 @@ function SchedulesCard(): JSX.Element {
     }>
   >([]);
   const [agents, setAgents] = useState<Array<{ id: string; name: string }>>([]);
-  const [agentId, setAgentId] = useState<string>('');
-  const [prompt, setPrompt] = useState<string>('');
-  const [intervalMinutes, setIntervalMinutes] = useState<number>(60);
 
   async function refresh(): Promise<void> {
     const [s, a] = await Promise.all([ipc.schedules.list(), ipc.chat.listAgents()]);
     setItems(s.items);
     setAgents(a.agents);
-    if (!agentId && a.agents.length > 0) setAgentId(a.agents[0]!.id);
   }
 
   useEffect(() => {
     void refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  async function add(): Promise<void> {
-    if (!agentId || prompt.trim().length === 0) return;
-    await ipc.schedules.create({ agentId, prompt: prompt.trim(), intervalMinutes });
-    setPrompt('');
-    void refresh();
-  }
 
   async function remove(id: string): Promise<void> {
     await ipc.schedules.delete(id);
@@ -1117,64 +1104,16 @@ function SchedulesCard(): JSX.Element {
     void refresh();
   }
 
+  // Older scheduler, superseded by Routines. Its jobs still run, so show any
+  // that exist (they used to have no UI at all) and let the user stop them.
+  if (items.length === 0) return null;
   return (
     <section className="settings-section">
       <div className="head">
-        <h3>Scheduled tasks</h3>
+        <h3>Older scheduled tasks</h3>
         <span className="muted text-xs">
-          Recurring runs — pick an agent + prompt + how often. Each run starts a fresh chat.
+          Still running in the background. Create new recurring runs in Routines.
         </span>
-      </div>
-      <div className="settings-row" style={{ alignItems: 'start' }}>
-        <div className="lab">
-          New schedule
-          <span className="hint">Runs in the background while the app is open.</span>
-        </div>
-        <div className="col gap-2">
-          <div className="row gap-2">
-            <select
-              className="field"
-              value={agentId}
-              onChange={(e) => setAgentId(e.target.value)}
-              style={{ flex: 1 }}
-            >
-              {agents.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                </option>
-              ))}
-            </select>
-            <input
-              type="number"
-              className="field"
-              value={intervalMinutes}
-              min={1}
-              max={60 * 24 * 30}
-              onChange={(e) => setIntervalMinutes(Number(e.target.value) || 60)}
-              style={{ width: 90 }}
-              title="Interval in minutes"
-            />
-            <span className="muted text-xs" style={{ alignSelf: 'center' }}>
-              min
-            </span>
-          </div>
-          <input
-            className="field"
-            placeholder="Prompt — what should the agent do each run?"
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-          />
-          <div>
-            <button
-              type="button"
-              className="btn btn-sm btn-primary"
-              onClick={() => void add()}
-              disabled={prompt.trim().length === 0 || !agentId}
-            >
-              Schedule
-            </button>
-          </div>
-        </div>
       </div>
 
       {items.length > 0 ? (
