@@ -65,7 +65,8 @@ export interface HookEntry {
 export type PluginOrigin =
   | { kind: 'marketplace'; marketplaceId: string }
   | { kind: 'local' }
-  | { kind: 'claude-home' };
+  /** Discovered read-only; `source` is e.g. the Claude Code marketplace name. */
+  | { kind: 'claude-home'; source?: string };
 
 export interface InstalledPlugin {
   id: string;

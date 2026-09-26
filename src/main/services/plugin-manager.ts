@@ -13,6 +13,7 @@ import { EventEmitter } from 'node:events';
 import { promises as fs } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { basename, isAbsolute, join } from 'node:path';
+import { discoverClaudeCodePlugins, discoverPluginDirs } from './plugin-discovery';
 import {
   parseMarketplace,
   readPluginManifest,
@@ -105,10 +106,15 @@ async function listDirs(path: string): Promise<string[]> {
 export interface PluginManagerOpts {
   /** Root for marketplaces/installed/registry.json. */
   root: string;
-  /** ~/.claude/plugins (read-only discovery). Omit to disable. */
-  pluginsHome?: string;
+  /** ~/.claude — Claude Code's installed plugins are discovered read-only. Omit to disable. */
+  claudeHome?: string;
   /** ~/.claude/skills (read-only standalone skills). Omit to disable. */
   skillsHome?: string;
+}
+
+/** Id for a read-only discovery; keyed by the tool's own plugin key. */
+function discoveredId(key: string): string {
+  return `claude-home-${key.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60)}`;
 }
 
 export class PluginManager extends EventEmitter {
@@ -156,24 +162,29 @@ export class PluginManager extends EventEmitter {
       await this.collect(p, join(this.installedDir, p.id), false, agg);
     }
 
-    // Read-only ~/.claude/plugins discoveries (skip ids already installed).
-    if (this.opts.pluginsHome) {
-      for (const name of await listDirs(this.opts.pluginsHome)) {
-        const id = `claude-home-${slug(name)}`;
+    // Read-only discoveries: plugins Claude Code has installed (skip ids
+    // already installed here). Enabled state mirrors Claude Code's until the
+    // user toggles it in Flowstate.
+    if (this.opts.claudeHome) {
+      const found =
+        (await discoverClaudeCodePlugins(this.opts.claudeHome)) ??
+        (await discoverPluginDirs(join(this.opts.claudeHome, 'plugins')));
+      for (const d of found) {
+        const id = discoveredId(d.key);
         if (this.reg.plugins.some((x) => x.id === id)) continue;
-        const dir = join(this.opts.pluginsHome, name);
-        const manifest = await readPluginManifest(dir);
-        const state = this.reg.discovered[id] ?? { enabled: true, hooksConsent: false };
+        const manifest = await readPluginManifest(d.dir);
+        const state = this.reg.discovered[id] ?? { enabled: d.defaultEnabled, hooksConsent: false };
         const persisted: PersistedPlugin = {
           id,
-          name: manifest.name,
-          version: manifest.version ?? '',
+          // A versioned cache dir makes a poor fallback name; prefer the key's.
+          name: manifest.name === basename(d.dir) ? d.name : manifest.name,
+          version: manifest.version ?? d.version,
           description: manifest.description ?? '',
-          origin: { kind: 'claude-home' },
+          origin: { kind: 'claude-home', source: d.source },
           enabled: state.enabled,
           hooksConsent: state.hooksConsent,
         };
-        await this.collect(persisted, dir, true, agg);
+        await this.collect(persisted, d.dir, true, agg);
       }
     }
 
@@ -227,7 +238,9 @@ export class PluginManager extends EventEmitter {
     for (const s of skills) if (!agg.skills.some((x) => x.name === s.name)) agg.skills.push(s);
     agg.commands.push(...commands);
     agg.agents.push(...agents);
-    agg.mcp.push(...mcp);
+    // MCP servers are local processes too: for plugins merely discovered on
+    // disk (not installed here) they need the same consent as hooks.
+    if (!readOnly || p.hooksConsent) agg.mcp.push(...mcp);
     if (p.hooksConsent) agg.hooks.push(...hooks);
   }
 

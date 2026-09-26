@@ -399,7 +399,7 @@ app.whenReady().then(async () => {
   const claudeHome = join(app.getPath('home'), '.claude');
   const pluginManager = new PluginManager({
     root: join(app.getPath('userData'), 'plugins'),
-    pluginsHome: join(claudeHome, 'plugins'),
+    claudeHome,
     skillsHome: join(claudeHome, 'skills'),
   });
   try {

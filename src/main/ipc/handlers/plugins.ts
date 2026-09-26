@@ -22,6 +22,7 @@ function toDto(p: InstalledPlugin): PluginDto {
     description: p.description,
     origin: p.origin.kind,
     ...(p.origin.kind === 'marketplace' ? { marketplaceId: p.origin.marketplaceId } : {}),
+    ...(p.origin.kind === 'claude-home' && p.origin.source ? { originSource: p.origin.source } : {}),
     enabled: p.enabled,
     hooksConsent: p.hooksConsent,
     readOnly: p.readOnly,

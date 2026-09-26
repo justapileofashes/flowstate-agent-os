@@ -1434,6 +1434,8 @@ export interface PluginDto {
   description: string;
   origin: 'marketplace' | 'local' | 'claude-home';
   marketplaceId?: string;
+  /** For discovered plugins: where the other tool got it (e.g. a marketplace). */
+  originSource?: string;
   enabled: boolean;
   hooksConsent: boolean;
   readOnly: boolean;

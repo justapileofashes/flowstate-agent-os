@@ -300,7 +300,7 @@ export function Plugins(): JSX.Element {
                     ) : null}
                   </div>
                   <div className="muted text-xs mono" style={{ marginTop: 3 }}>
-                    {p.origin}
+                    {p.origin === 'claude-home' ? `Claude Code${p.originSource ? ' · ' + p.originSource : ''}` : p.origin}
                     {p.version ? ' · v' + p.version : p.readOnly ? ' · read-only' : ''}
                   </div>
                 </div>
@@ -313,7 +313,7 @@ export function Plugins(): JSX.Element {
                 ))}
               </div>
 
-              {p.components.hooks > 0 ? (
+              {p.components.hooks > 0 || (p.readOnly && p.components.mcp > 0) ? (
                 <div
                   className="row gap-3"
                   style={{ alignItems: 'center', justifyContent: 'space-between', marginTop: 12, padding: '9px 12px', borderRadius: 8, border: '1px solid rgba(160,130,120,0.32)', background: 'rgba(160,130,120,0.08)' }}
@@ -323,9 +323,13 @@ export function Plugins(): JSX.Element {
                       <path d="M7 1.5 13 12H1L7 1.5Z" stroke="currentColor" strokeLinejoin="round" />
                       <path d="M7 5.5v3 M7 10.2v.2" stroke="currentColor" strokeLinecap="round" />
                     </svg>
-                    Runs shell commands on your machine
+                    {p.components.hooks > 0 && p.readOnly && p.components.mcp > 0
+                      ? 'Runs commands on your machine (hooks + MCP servers)'
+                      : p.components.hooks > 0
+                        ? 'Runs shell commands on your machine (hooks)'
+                        : 'Starts local MCP servers on your machine'}
                   </span>
-                  <Switch on={p.hooksConsent} tone="bad" disabled={busy} onClick={() => void run(() => ipc.plugins.setHooksConsent(p.id, !p.hooksConsent))} title={p.hooksConsent ? 'Revoke hooks consent' : 'Allow hooks'} />
+                  <Switch on={p.hooksConsent} tone="bad" disabled={busy} onClick={() => void run(() => ipc.plugins.setHooksConsent(p.id, !p.hooksConsent))} title={p.hooksConsent ? 'Revoke consent' : 'Allow'} />
                 </div>
               ) : null}
 
