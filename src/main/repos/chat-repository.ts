@@ -298,7 +298,11 @@ export class ChatRepository {
       if (msg.role === 'user') {
         const chat = this.getChatStmt.get(chatId);
         if (chat && chat.title === '') {
-          const title = msg.content.slice(0, 60).trim();
+          // Pasted images are data URLs in the text — never title a chat with base64.
+          const title = msg.content
+            .replace(/!\[[^\]]*\]\(data:[^)]*\)/g, '[image]')
+            .slice(0, 60)
+            .trim();
           if (title.length > 0) {
             this.updateChatTitleStmt.run(title, now, chatId);
             return;

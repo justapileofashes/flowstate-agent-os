@@ -29,6 +29,7 @@ export const CHANNELS = {
   SHELL_OPEN_URL: 'shell:open-url',
   PREVIEW_REGISTER: 'preview:register',
   DIALOG_PICK_FOLDER: 'dialog:pick-folder',
+  VOICE_TRANSCRIBE: 'voice:transcribe',
   DIALOG_PICK_FILE: 'dialog:pick-file',
   CLOUD_TEST_CONNECTION: 'cloud:test-connection',
   OLLAMA_PULL: 'ollama:pull',

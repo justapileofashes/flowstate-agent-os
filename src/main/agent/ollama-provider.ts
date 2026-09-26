@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { contextWindowFor, estimateTokens } from '@main/services/token-estimate';
+import { extractInlineImages } from './inline-images';
 import type {
   ChatOnceOpts,
   ChatOnceResult,
@@ -82,11 +83,15 @@ export class OllamaProvider implements LLMProvider {
   }
 
   async *chatStream(opts: ChatStreamOpts): AsyncIterable<ProviderDelta> {
+    // Pasted images arrive as markdown data URLs in the text; vision models
+    // need them as base64 `images` instead.
+    const split = opts.messages.map((m) => extractInlineImages(m.content));
     const body: Record<string, unknown> = {
       model: opts.model,
-      messages: opts.messages.map((m) => ({
+      messages: opts.messages.map((m, i) => ({
         role: m.role,
-        content: m.content,
+        content: split[i]!.text,
+        ...(split[i]!.images.length > 0 ? { images: split[i]!.images } : {}),
         ...(m.toolCalls
           ? {
               tool_calls: m.toolCalls.map((c) => ({
@@ -106,7 +111,7 @@ export class OllamaProvider implements LLMProvider {
         },
       })),
     };
-    body.options = { num_ctx: this.numCtx(opts.model, [body.messages, body.tools]) };
+    body.options = { num_ctx: this.numCtx(opts.model, [split.map((s) => s.text), body.tools]) };
 
     const res = await this.fetchFn(`${this.host}/api/chat`, {
       method: 'POST',

@@ -49,8 +49,13 @@ export class OpenAICompatTranscriber implements Transcriber {
 
   async test(): Promise<{ ok: boolean; error?: string }> {
     try {
-      // Any HTTP response = reachable (some servers 404 /v1/models).
-      await this.fetchImpl(`${this.cfg.url.replace(/\/$/, '')}/v1/models`);
+      const res = await this.fetchImpl(`${this.cfg.url.replace(/\/$/, '')}/v1/models`, {
+        headers: this.cfg.apiKey ? { Authorization: `Bearer ${this.cfg.apiKey}` } : {},
+      });
+      // Some STT servers don't implement /v1/models (404) — still reachable.
+      // An auth failure or server error is not a working transcriber.
+      if (res.status === 401 || res.status === 403) return { ok: false, error: 'API key rejected' };
+      if (res.status >= 500) return { ok: false, error: `server error (HTTP ${res.status})` };
       return { ok: true };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };

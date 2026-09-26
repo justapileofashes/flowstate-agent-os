@@ -481,7 +481,8 @@ const api = {
       ipcRenderer.invoke(CHANNELS.SYSTEM_STATS_GET, {}),
   },
   clis: {
-    detect: (): Promise<ClisDetectResponse> => ipcRenderer.invoke(CHANNELS.CLIS_DETECT, {}),
+    detect: (force = false): Promise<ClisDetectResponse> =>
+      ipcRenderer.invoke(CHANNELS.CLIS_DETECT, { force }),
     get: (): Promise<ClisGetResponse> => ipcRenderer.invoke(CHANNELS.CLIS_GET, {}),
     connect: (ids: string[]): Promise<{ ok: true }> =>
       ipcRenderer.invoke(CHANNELS.CLIS_CONNECT, { ids }),
@@ -548,6 +549,13 @@ const api = {
   preview: {
     register: (html: string): Promise<{ url: string }> =>
       ipcRenderer.invoke(CHANNELS.PREVIEW_REGISTER, { html }),
+  },
+  voice: {
+    transcribe: (
+      data: ArrayBuffer,
+      mime: string,
+    ): Promise<{ text?: string; error?: string; notConfigured?: boolean }> =>
+      ipcRenderer.invoke(CHANNELS.VOICE_TRANSCRIBE, { data, mime }),
   },
   dialogs: {
     pickFolder: (opts: { title?: string; defaultPath?: string } = {}): Promise<{ path: string | null }> =>

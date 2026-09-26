@@ -249,7 +249,8 @@ interface FlowstateApi {
     stats: () => Promise<SystemStatsGetResponse>;
   };
   clis: {
-    detect: () => Promise<import('@shared/ipc-channels').ClisDetectResponse>;
+    /** `force` skips the 60 s detection cache (the Re-scan button). */
+    detect: (force?: boolean) => Promise<import('@shared/ipc-channels').ClisDetectResponse>;
     get: () => Promise<import('@shared/ipc-channels').ClisGetResponse>;
     connect: (ids: string[]) => Promise<{ ok: true }>;
   };
@@ -318,6 +319,13 @@ interface FlowstateApi {
   preview: {
     /** Serve agent HTML from the isolated flowstate-preview: scheme. */
     register: (html: string) => Promise<{ url: string }>;
+  };
+  voice: {
+    /** Transcribe one recorded clip with the configured STT backend. */
+    transcribe: (
+      data: ArrayBuffer,
+      mime: string,
+    ) => Promise<{ text?: string; error?: string; notConfigured?: boolean }>;
   };
   dialogs: {
     pickFolder: (opts?: { title?: string; defaultPath?: string }) => Promise<{ path: string | null }>;
