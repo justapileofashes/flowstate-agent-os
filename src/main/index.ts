@@ -22,7 +22,7 @@ import { SettingsService } from './services/settings-service';
 import { SecretStore, electronSafeStorageBackend } from './services/secret-store';
 import { initAutoUpdate } from './services/auto-update';
 import { OllamaClient } from './services/ollama-client';
-import { OllamaProvider } from './agent/ollama-provider';
+import { DEFAULT_MAX_CTX, OllamaProvider } from './agent/ollama-provider';
 import { AnthropicProvider } from './agent/anthropic-provider';
 import { OpenAIProvider } from './agent/openai-provider';
 import { GeminiProvider } from './agent/gemini-provider';
@@ -238,7 +238,10 @@ app.whenReady().then(async () => {
 
   const ollamaHost = settings.get('ollama_host') ?? 'http://localhost:11434';
   const ollamaClient = new OllamaClient(ollamaHost);
-  const ollamaProviderInstance = new OllamaProvider(ollamaHost);
+  const ollamaProviderInstance = new OllamaProvider(ollamaHost, fetch, () => {
+    const n = Number(settings.get('ollama_max_ctx'));
+    return Number.isFinite(n) && n >= 4096 ? n : DEFAULT_MAX_CTX;
+  });
   const anthropicProvider = new AnthropicProvider(() => settings.get('anthropic_api_key') ?? '');
   const openaiProvider = new OpenAIProvider(() => settings.get('openai_api_key') ?? '');
   const geminiProvider = new GeminiProvider(() => settings.get('gemini_api_key') ?? '');

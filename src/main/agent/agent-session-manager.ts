@@ -5,6 +5,7 @@ import type { LLMProvider } from './llm-provider';
 import type { ChatRepository } from '@main/repos/chat-repository';
 import { AgentSession } from './agent-session';
 import { getToolSpecsForAgent } from './tool-specs';
+import { buildSkillsBlock } from './skills-block';
 import { CHANNELS } from '@shared/ipc-channels';
 import { ToolDispatcher } from './tool-dispatcher';
 import { loadConstitution } from './constitution';
@@ -82,12 +83,7 @@ export class AgentSessionManager {
     // The model sees name+description here and loads full instructions via the
     // `skill` tool when one applies.
     const skills = this.opts.skillRegistry?.descriptions(agent.id) ?? [];
-    const skillsBlock =
-      skills.length > 0
-        ? `\n\n## Available skills\nYou have skills you can load on demand. When a task matches one, call the \`skill\` tool with its name FIRST, then follow the instructions it returns.\n${skills
-            .map((s) => `- **${s.name}** — ${s.description}`)
-            .join('\n')}`
-        : '';
+    const skillsBlock = buildSkillsBlock(skills);
     // Connected CLIs — only meaningful to agents that can shell out, since they
     // invoke these via run_shell.
     const cliBlock = agent.toolPerms.shell_enabled

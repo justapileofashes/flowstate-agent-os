@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { contextWindowFor, estimateTokens } from '@main/services/token-estimate';
 import type {
   ChatOnceOpts,
   ChatOnceResult,
@@ -30,14 +31,39 @@ interface OllamaTagsResponse {
   models?: Array<{ name: string; size?: number }>;
 }
 
+const MIN_CTX = 8192;
+export const DEFAULT_MAX_CTX = 32768;
+const REPLY_RESERVE_TOKENS = 2048;
+
+/**
+ * Context window to request from Ollama. Without `options.num_ctx` Ollama
+ * uses its 4096-token default and silently drops the start of the prompt —
+ * with ~20 tool schemas that is the agent's system prompt. Size the window
+ * to the prompt (power of two, at least 8k) but never past the model's own
+ * window or `maxCtx`, since every doubling costs VRAM.
+ */
+export function pickNumCtx(model: string, promptTokens: number, maxCtx = DEFAULT_MAX_CTX): number {
+  const need = promptTokens + REPLY_RESERVE_TOKENS;
+  let ctx = MIN_CTX;
+  while (ctx < need) ctx *= 2;
+  const cap = Math.max(MIN_CTX, Math.min(contextWindowFor(model) || maxCtx, maxCtx));
+  return Math.min(ctx, cap);
+}
+
 export class OllamaProvider implements LLMProvider {
   constructor(
     private readonly host: string,
     private readonly fetchFn: FetchFn = fetch,
+    /** Upper bound for num_ctx (Settings → `ollama_max_ctx`). */
+    private readonly maxCtx: () => number = () => DEFAULT_MAX_CTX,
   ) {}
 
+  private numCtx(model: string, payload: unknown): number {
+    return pickNumCtx(model, estimateTokens(JSON.stringify(payload)), this.maxCtx());
+  }
+
   async *chatStream(opts: ChatStreamOpts): AsyncIterable<ProviderDelta> {
-    const body = {
+    const body: Record<string, unknown> = {
       model: opts.model,
       messages: opts.messages.map((m) => ({
         role: m.role,
@@ -61,6 +87,7 @@ export class OllamaProvider implements LLMProvider {
         },
       })),
     };
+    body.options = { num_ctx: this.numCtx(opts.model, [body.messages, body.tools]) };
 
     const res = await this.fetchFn(`${this.host}/api/chat`, {
       method: 'POST',
@@ -136,6 +163,7 @@ export class OllamaProvider implements LLMProvider {
       messages: opts.messages.map((m) => ({ role: m.role, content: m.content })),
       stream: false,
     };
+    body.options = { num_ctx: this.numCtx(opts.model, body.messages) };
     if (opts.format === 'json') body.format = 'json';
 
     const res = await this.fetchFn(`${this.host}/api/chat`, {

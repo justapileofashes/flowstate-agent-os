@@ -33,6 +33,7 @@ import {
   type ConventionFile,
 } from '@main/services/project-context';
 import { preflightPrompt, contextWindowFor } from '@main/services/token-estimate';
+import { getToolSpecsForAgent } from '@main/agent/tool-specs';
 import { runDoctor } from '@main/services/env-doctor';
 import { parsePins, serializePins, togglePin } from '@main/services/pins';
 import { parseHistory, serializeHistory, pushHistory } from '@main/services/prompt-history';
@@ -195,10 +196,15 @@ export function registerDevToolsHandlers(deps: Deps): void {
   });
 
   // ---- Token preflight ----
+  // Every agent turn also carries the built-in tool schemas (~4k tokens);
+  // count them so the warning reflects what the model actually receives.
+  const toolSchemaChars = JSON.stringify(
+    getToolSpecsForAgent({ shell_enabled: true, delete_enabled: true }),
+  ).length;
   ipcMain.handle(CHANNELS.PROMPT_PREFLIGHT, (_e, raw) => {
     const { text, contextChars, model } = schemas.promptPreflightRequest.parse(raw);
     const capTokens = model ? contextWindowFor(model) : 0;
-    return preflightPrompt({ text, contextChars, capTokens });
+    return preflightPrompt({ text, contextChars: (contextChars ?? 0) + toolSchemaChars, capTokens });
   });
 
   // ---- Environment doctor ----
