@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { promises as fs } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { strToU8, zipSync } from 'fflate';
@@ -225,6 +226,51 @@ describe('PluginManager.installFrom (local sources)', () => {
     await fs.mkdir(join(dir, 'nothing'));
     await expect(pm.installFrom(join(dir, 'nothing'))).rejects.toThrow(/No plugin, marketplace or SKILL\.md/);
     await expect(pm.installFrom(join(dir, 'missing'))).rejects.toThrow(/Not found/);
+  });
+});
+
+const hasGit = (() => {
+  try {
+    execFileSync('git', ['--version'], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
+describe.runIf(hasGit)('git sources (local bare repo)', () => {
+  let dir: string;
+  const git = (cwd: string, ...args: string[]): void => {
+    execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'init.defaultBranch=main', ...args], {
+      cwd,
+      stdio: 'ignore',
+    });
+  };
+  beforeEach(async () => {
+    dir = await fs.mkdtemp(join(tmpdir(), 'fs-git-'));
+  });
+  afterEach(async () => {
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it('clones a marketplace repo, and names a missing repo clearly', async () => {
+    const work = join(dir, 'work');
+    await write(join(work, '.claude-plugin', 'marketplace.json'), '{"name":"Git Market","plugins":[{"name":"p","source":"./p"}]}');
+    await write(join(work, 'p', 'skills', 's', 'SKILL.md'), skillMd('s'));
+    git(work, 'init');
+    git(work, 'add', '.');
+    git(work, 'commit', '-m', 'init');
+    const bare = join(dir, 'market.git');
+    git(dir, 'clone', '--bare', work, bare);
+
+    const pm = new PluginManager({ root: join(dir, 'root') });
+    await pm.load();
+    const ref = await pm.addMarketplace(bare);
+    expect(ref.id).toBe('git-market');
+    await pm.install('git-market', 'p');
+    expect(pm.skills().map((s) => s.name)).toEqual(['s']);
+
+    await expect(pm.addMarketplace(join(dir, 'missing.git'))).rejects.toThrow(/Repository not found/);
   });
 });
 

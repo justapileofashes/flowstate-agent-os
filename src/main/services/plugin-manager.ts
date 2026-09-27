@@ -13,7 +13,7 @@
 
 import { EventEmitter } from 'node:events';
 import { promises as fs } from 'node:fs';
-import { execFile } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { basename, dirname, isAbsolute, join, relative } from 'node:path';
 import { discoverClaudeCodePlugins, discoverPluginDirs } from './plugin-discovery';
 import {
@@ -102,46 +102,106 @@ function isGitSource(s: string): boolean {
   return /^(https?:\/\/|git@|ssh:\/\/)/.test(s) || s.endsWith('.git');
 }
 
-function execGit(args: string[], timeoutMs: number): Promise<{ ok: boolean; err: string }> {
+interface GitResult {
+  ok: boolean;
+  /** git's own error output (progress lines dropped), or the spawn error. */
+  err: string;
+  timedOut: boolean;
+}
+
+/**
+ * Run git without ever blocking on a credential prompt (terminal or Git
+ * Credential Manager). Transfers slower than 1 KB/s for 30 s abort instead of
+ * hanging. On timeout the whole process tree is killed: on Windows `git` is a
+ * launcher, and killing only it leaves the real git + git-remote-https
+ * running and holding the target folder.
+ */
+function execGit(args: string[], timeoutMs: number): Promise<GitResult> {
   return new Promise((resolve) => {
-    execFile(
-      'git',
-      args,
-      {
-        windowsHide: true,
-        timeout: timeoutMs,
-        // Never block on a credential prompt (terminal or Git Credential Manager).
-        env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' },
-      },
-      (err) => {
-        resolve(err ? { ok: false, err: err.message } : { ok: true, err: '' });
-      },
-    );
+    let stderr = '';
+    let timedOut = false;
+    let settled = false;
+    const child = spawn('git', ['-c', 'http.lowSpeedLimit=1000', '-c', 'http.lowSpeedTime=30', ...args], {
+      windowsHide: true,
+      stdio: ['ignore', 'ignore', 'pipe'],
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' },
+    });
+    child.stderr?.setEncoding('utf8');
+    child.stderr?.on('data', (d: string) => {
+      stderr = (stderr + d).slice(-8000);
+    });
+    const done = (r: GitResult): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(r);
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      if (process.platform === 'win32' && child.pid) {
+        spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }).on(
+          'error',
+          () => child.kill(),
+        );
+      } else {
+        child.kill('SIGKILL');
+      }
+    }, timeoutMs);
+    child.on('error', (err) => done({ ok: false, err: err.message, timedOut: false }));
+    child.on('close', (code) => {
+      const message = stderr
+        .split(/\r?\n/)
+        .filter((l) => l.trim() && !/^Cloning into /.test(l))
+        .join('\n');
+      done(code === 0 && !timedOut ? { ok: true, err: '', timedOut: false } : { ok: false, err: message, timedOut });
+    });
   });
 }
 
-function gitError(err: string, url: string): Error {
+function gitError(res: GitResult, url: string): Error {
+  const err = res.err;
+  if (res.timedOut || /Operation too slow|timed out/i.test(err)) {
+    return new Error(`Timed out downloading ${url}. The network may be slow or GitHub unreachable — try again.`);
+  }
   if (/ENOENT/.test(err)) return new Error('Git is not installed. Install Git for Windows (git-scm.com) and try again.');
-  if (/not found|could not read Username|Authentication failed|terminal prompts disabled/i.test(err)) {
+  if (/Remote branch .* not found/i.test(err)) return new Error(`That branch or tag doesn't exist in ${url}`);
+  if (
+    /not found|does not exist|not appear to be a git repository|Could not read from remote|could not read Username|Authentication failed|terminal prompts disabled/i.test(
+      err,
+    )
+  ) {
     return new Error(`Repository not found, or it's private: ${url}`);
   }
-  if (/Remote branch .* not found/i.test(err)) return new Error(`That branch or tag doesn't exist in ${url}`);
-  return new Error(`git clone failed: ${err.slice(0, 400)}`);
+  return new Error(`git clone failed: ${err.slice(-400) || 'unknown error'}`);
 }
 
-/** Shallow clone; a commit SHA ref falls back to a full clone + checkout. */
+/** Worth one more try: a stall or dropped connection, not a missing repo. */
+function isTransientGitFailure(res: GitResult): boolean {
+  if (res.timedOut) return true;
+  return /Operation too slow|timed out|early EOF|RPC failed|Could not resolve host|Connection (reset|refused|was reset)|unexpected disconnect|SSL|TLS/i.test(
+    res.err,
+  );
+}
+
+/** Shallow clone (retried once on a stall); a commit SHA ref falls back to a
+ *  full clone + checkout. */
 async function cloneRepo(url: string, ref: string | undefined, dest: string): Promise<void> {
-  const res = await execGit(['clone', '--depth', '1', ...(ref ? ['--branch', ref] : []), '--', url, dest], 120_000);
+  const args = ['clone', '--depth', '1', ...(ref ? ['--branch', ref] : []), '--', url, dest];
+  let res = await execGit(args, 90_000);
+  if (!res.ok && isTransientGitFailure(res)) {
+    await fs.rm(dest, { recursive: true, force: true }).catch(() => {});
+    res = await execGit(args, 90_000);
+  }
   if (res.ok) return;
   if (ref && /^[0-9a-f]{7,40}$/i.test(ref)) {
     await fs.rm(dest, { recursive: true, force: true }).catch(() => {});
     const full = await execGit(['clone', '--', url, dest], 300_000);
-    if (!full.ok) throw gitError(full.err, url);
+    if (!full.ok) throw gitError(full, url);
     const co = await execGit(['-C', dest, 'checkout', ref], 60_000);
-    if (!co.ok) throw new Error(`git checkout ${ref} failed: ${co.err.slice(0, 300)}`);
+    if (!co.ok) throw new Error(`git checkout ${ref} failed: ${co.err.slice(-300)}`);
     return;
   }
-  throw gitError(res.err, url);
+  throw gitError(res, url);
 }
 
 async function isDir(p: string): Promise<boolean> {
@@ -383,8 +443,7 @@ export class PluginManager extends EventEmitter {
     if (isGitSource(trimmed)) {
       // Clone to a temp dir first so we can read its name before final placement.
       const tmpClone = join(this.marketplacesDir, `_clone-${Date.now()}`);
-      const res = await execGit(['clone', '--depth', '1', '--', trimmed, tmpClone], 60_000);
-      if (!res.ok) throw gitError(res.err, trimmed);
+      await cloneRepo(trimmed, undefined, tmpClone);
       return this.registerMarketplace({ dir: tmpClone, source: trimmed, ownedRoot: tmpClone });
     }
     if (!isAbsolute(trimmed)) throw new Error('Local marketplace path must be absolute.');
@@ -543,7 +602,7 @@ export class PluginManager extends EventEmitter {
     if (!m) throw new Error(`Unknown marketplace: ${id}`);
     if (isGitSource(m.source)) {
       const res = await execGit(['-C', m.path, 'pull', '--ff-only'], 60_000);
-      if (!res.ok) throw new Error(`git pull failed: ${res.err}`);
+      if (!res.ok) throw new Error(res.timedOut ? 'git pull timed out — try again.' : `git pull failed: ${res.err.slice(-400)}`);
     }
   }
 
@@ -620,8 +679,7 @@ export class PluginManager extends EventEmitter {
     if (isGitSource(entry.source)) {
       srcDir = join(this.marketplacesDir, `${id}-src`);
       await fs.rm(srcDir, { recursive: true, force: true }).catch(() => {});
-      const res = await execGit(['clone', '--depth', '1', '--', entry.source, srcDir], 60_000);
-      if (!res.ok) throw gitError(res.err, entry.source);
+      await cloneRepo(entry.source, undefined, srcDir);
     } else {
       // Relative path within the marketplace repo.
       srcDir = isAbsolute(entry.source) ? entry.source : join(m.path, entry.source);
