@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ipc } from '../lib/ipc';
+import { ipcErrorMessage } from '../lib/ipc-error';
 import type {
   PluginDto,
   PluginMarketplaceDto,
   PluginMarketplacePluginDto,
   PluginSkillDto,
+  PluginSkillSourceDto,
 } from '@shared/ipc-channels';
 
 // Visual: Flowstate v2 redesign (plugins-screen.jsx). Wired to the real
@@ -100,6 +102,19 @@ function Hdr({ children }: { children: React.ReactNode }): JSX.Element {
   );
 }
 
+function originLabel(p: PluginDto): string {
+  switch (p.origin) {
+    case 'claude-home':
+      return `Claude Code${p.originSource ? ' · ' + p.originSource : ''}`;
+    case 'marketplace':
+      return `marketplace${p.marketplaceId ? ' · ' + p.marketplaceId : ''}`;
+    case 'git':
+      return `git${p.originSource ? ' · ' + p.originSource : ''}`;
+    default:
+      return `local${p.originSource ? ' · ' + p.originSource : ''}`;
+  }
+}
+
 function compBadges(c: PluginDto['components']): string[] {
   const out: string[] = [];
   if (c.skills) out.push(c.skills + ' skill' + (c.skills > 1 ? 's' : ''));
@@ -115,23 +130,28 @@ export function Plugins({ onAgentsChanged }: { onAgentsChanged?: () => void } = 
   const [marketplaces, setMarketplaces] = useState<PluginMarketplaceDto[]>([]);
   const [available, setAvailable] = useState<PluginMarketplacePluginDto[]>([]);
   const [skills, setSkills] = useState<PluginSkillDto[]>([]);
+  const [sources, setSources] = useState<PluginSkillSourceDto[]>([]);
   const [src, setSrc] = useState('');
+  const [from, setFrom] = useState('');
+  const [installed, setInstalled] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
-      const [p, m, s] = await Promise.all([
+      const [p, m, s, ss] = await Promise.all([
         ipc.plugins.list(),
         ipc.plugins.marketplaces(),
         ipc.plugins.listSkills(),
+        ipc.plugins.skillSources(),
       ]);
       setPlugins(p.plugins);
       setMarketplaces(m.marketplaces);
       setSkills(s.skills);
+      setSources(ss.sources);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(ipcErrorMessage(e));
     }
   }, []);
 
@@ -162,7 +182,7 @@ export function Plugins({ onAgentsChanged }: { onAgentsChanged?: () => void } = 
       await refresh();
       await refreshBrowse();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      setError(ipcErrorMessage(e));
     } finally {
       setBusy(false);
     }
@@ -175,6 +195,39 @@ export function Plugins({ onAgentsChanged }: { onAgentsChanged?: () => void } = 
       await ipc.plugins.addMarketplace(s);
       setSrc('');
     });
+  };
+
+  const installFrom = (source: string): void => {
+    const s = source.trim();
+    if (!s) return;
+    setInstalled(null);
+    void run(async () => {
+      const r = await ipc.plugins.installFrom(s);
+      if (!r.ok) throw new Error(r.error ?? 'Install failed.');
+      setFrom('');
+      const n = r.skills ?? 0;
+      setInstalled(
+        r.kind === 'marketplace'
+          ? `Added marketplace “${r.name}” — its plugins are listed under Browse & install.`
+          : r.kind === 'skills'
+            ? `Installed ${n} skill${n === 1 ? '' : 's'} as “${r.name}”.`
+            : `Installed plugin “${r.name}”${n ? ` with ${n} skill${n === 1 ? '' : 's'}` : ''}.`,
+      );
+      if (r.kind === 'plugin') onAgentsChanged?.();
+    });
+  };
+
+  const pickFolder = async (): Promise<void> => {
+    const { path } = await ipc.dialogs.pickFolder({ title: 'Plugin, skill or marketplace folder' });
+    if (path) installFrom(path);
+  };
+
+  const pickArchive = async (): Promise<void> => {
+    const { path } = await ipc.dialogs.pickFile({
+      title: 'Plugin or skill archive',
+      filters: [{ name: 'Plugin / skill archives', extensions: ['zip', 'plugin', 'skill'] }],
+    });
+    if (path) installFrom(path);
   };
 
   // plugins available per marketplace, for the count column
@@ -196,6 +249,76 @@ export function Plugins({ onAgentsChanged }: { onAgentsChanged?: () => void } = 
         <div className="card" style={{ padding: 12, marginTop: 16, borderColor: 'var(--bad)' }}>
           <span className="text-xs" style={{ color: 'var(--bad)' }}>{error}</span>
         </div>
+      ) : null}
+
+      {/* Install from anywhere */}
+      <Hdr>Install from anywhere</Hdr>
+      <div className="card" style={{ padding: 14 }}>
+        <div className="row gap-2" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
+          <input
+            className="field"
+            value={from}
+            onChange={(e) => setFrom(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && installFrom(from)}
+            placeholder="owner/repo · owner/repo/skills/name#branch · GitHub or git URL · folder path"
+            aria-label="Install from"
+            style={{ flex: 1, minWidth: 260 }}
+          />
+          <button className="btn btn-sm btn-primary" disabled={busy || !from.trim()} onClick={() => installFrom(from)}>
+            {busy ? 'Working…' : 'Install'}
+          </button>
+          <button className="btn btn-sm btn-ghost" disabled={busy} onClick={() => void pickFolder()}>
+            Folder…
+          </button>
+          <button className="btn btn-sm btn-ghost" disabled={busy} onClick={() => void pickArchive()}>
+            Zip / .plugin / .skill…
+          </button>
+        </div>
+        <div className="muted text-xs" style={{ marginTop: 8, lineHeight: 1.5 }}>
+          Works out what's there: a marketplace is added, a plugin is installed, and loose SKILL.md
+          skills are installed as one bundle you can switch off or uninstall.
+        </div>
+        {installed ? (
+          <div className="text-xs" style={{ marginTop: 8, color: 'var(--good)' }} aria-live="polite">
+            {installed}
+          </div>
+        ) : null}
+      </div>
+
+      {/* Other tools' skill folders */}
+      {sources.length > 0 ? (
+        <>
+          <Hdr>Skills from other tools</Hdr>
+          <div className="card" style={{ padding: 6 }}>
+            {sources.map((s, i) => (
+              <div
+                key={s.id}
+                className="row gap-3"
+                style={{ alignItems: 'center', padding: '10px 12px', borderTop: i ? '1px solid var(--border)' : 'none' }}
+              >
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ fontSize: 13, color: 'var(--ink-strong)', fontWeight: 500 }}>{s.label}</div>
+                  <div className="muted text-xs mono" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={s.paths.join('\n')}>
+                    {s.paths.join(' · ')}
+                  </div>
+                </div>
+                <span className="muted text-xs mono">
+                  {s.count} skill{s.count === 1 ? '' : 's'}
+                </span>
+                <Switch
+                  on={s.enabled}
+                  disabled={busy}
+                  onClick={() => void run(() => ipc.plugins.setSkillSource(s.id, !s.enabled))}
+                  title={s.enabled ? `Stop using ${s.label} skills` : `Use ${s.label} skills`}
+                />
+              </div>
+            ))}
+          </div>
+          <div className="muted text-xs" style={{ marginTop: 6 }}>
+            Read-only — Flowstate never changes these folders. Each agent's own workspace
+            <span className="mono"> .claude/skills</span> is always used by that agent.
+          </div>
+        </>
       ) : null}
 
       {/* Marketplaces */}
@@ -299,8 +422,8 @@ export function Plugins({ onAgentsChanged }: { onAgentsChanged?: () => void } = 
                       </span>
                     ) : null}
                   </div>
-                  <div className="muted text-xs mono" style={{ marginTop: 3 }}>
-                    {p.origin === 'claude-home' ? `Claude Code${p.originSource ? ' · ' + p.originSource : ''}` : p.origin}
+                  <div className="muted text-xs mono" style={{ marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {originLabel(p)}
                     {p.version ? ' · v' + p.version : p.readOnly ? ' · read-only' : ''}
                   </div>
                 </div>
@@ -368,7 +491,7 @@ export function Plugins({ onAgentsChanged }: { onAgentsChanged?: () => void } = 
             <div key={s.name} className="row gap-3" style={{ alignItems: 'center', padding: '11px 12px', borderTop: i ? '1px solid var(--border)' : 'none' }}>
               <span className="mono" style={{ fontSize: 12, color: 'var(--ink)', width: 130, flex: '0 0 auto' }}>{s.name}</span>
               <span className="muted text-xs" style={{ flex: 1, minWidth: 0 }}>{s.description}</span>
-              <span className="muted text-xs mono">{s.pluginId || 'standalone'}</span>
+              <span className="muted text-xs mono">{s.pluginId || s.source || 'standalone'}</span>
             </div>
           ))
         )}

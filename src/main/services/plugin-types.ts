@@ -21,6 +21,8 @@ export interface SkillEntry {
   dir: string;
   /** Owning plugin id, or null for a standalone skill. */
   pluginId: string | null;
+  /** Where a standalone skill was found, e.g. "Codex CLI" or "Workspace". */
+  source?: string;
 }
 
 /** A slash command (`commands/*.md`). */
@@ -64,7 +66,10 @@ export interface HookEntry {
 
 export type PluginOrigin =
   | { kind: 'marketplace'; marketplaceId: string }
-  | { kind: 'local' }
+  /** Installed from a git repo / GitHub shorthand; `source` is what was typed. */
+  | { kind: 'git'; source: string }
+  /** Installed from a folder or archive on disk. */
+  | { kind: 'local'; source?: string }
   /** Discovered read-only; `source` is e.g. the Claude Code marketplace name. */
   | { kind: 'claude-home'; source?: string };
 
@@ -97,7 +102,30 @@ export interface MarketplaceRef {
   source: string;
   /** Absolute path on disk (clone dir for git, the path itself for local). */
   path: string;
+  /** Clone dir Flowstate owns when `path` is a sub-folder of it (deleted on remove). */
+  root?: string;
   addedAt: number;
+}
+
+/** What "Install from…" did with a source. */
+export interface InstallFromResult {
+  kind: 'marketplace' | 'plugin' | 'skills';
+  /** Marketplace id or installed plugin id. */
+  id: string;
+  name: string;
+  /** Skills the install added (plugins + skill bundles). */
+  skills: number;
+}
+
+/** A folder of skills kept by another tool, read-only. */
+export interface SkillSourceInfo {
+  id: string;
+  label: string;
+  /** Folders that exist on this machine. */
+  paths: string[];
+  /** Skills found (enabled or not). */
+  count: number;
+  enabled: boolean;
 }
 
 /** One plugin offered by a marketplace (not necessarily installed). */

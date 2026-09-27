@@ -186,8 +186,13 @@ interface FlowstateApi {
     setHooksConsent: (id: string, consent: boolean) => Promise<{ ok: boolean }>;
     listSkills: () => Promise<PluginsListSkillsResponse>;
     getAgentSkills: (agentId: string) => Promise<{ names: string[] | null }>;
-    setAgentSkills: (agentId: string, names: string[]) => Promise<{ ok: boolean }>;
+    /** null lifts the restriction (every enabled skill). */
+    setAgentSkills: (agentId: string, names: string[] | null) => Promise<{ ok: boolean }>;
     importAgents: (id: string) => Promise<{ ok: boolean; count: number }>;
+    /** owner/repo[/sub][#ref], git URL, folder, or .zip/.plugin/.skill path. */
+    installFrom: (source: string) => Promise<import('@shared/ipc-channels').PluginInstallFromResponse>;
+    skillSources: () => Promise<{ sources: import('@shared/ipc-channels').PluginSkillSourceDto[] }>;
+    setSkillSource: (id: string, enabled: boolean) => Promise<{ ok: boolean }>;
     subscribeStatus: (cb: (payload: PluginsStatusBroadcast) => void) => () => void;
   };
   approvals: {

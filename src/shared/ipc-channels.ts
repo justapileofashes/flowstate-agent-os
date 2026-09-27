@@ -170,6 +170,9 @@ export const CHANNELS = {
   PLUGINS_SET_AGENT_SKILLS: 'plugins:set-agent-skills',
   PLUGINS_GET_AGENT_SKILLS: 'plugins:get-agent-skills',
   PLUGINS_IMPORT_AGENTS: 'plugins:import-agents',
+  PLUGINS_INSTALL_FROM: 'plugins:install-from',
+  PLUGINS_SKILL_SOURCES: 'plugins:skill-sources',
+  PLUGINS_SET_SKILL_SOURCE: 'plugins:set-skill-source',
   TERMINAL_START: 'terminal:start',
   TERMINAL_INPUT: 'terminal:input',
   TERMINAL_KILL: 'terminal:kill',
@@ -666,9 +669,15 @@ export const schemas = {
   }),
   pluginsSetAgentSkillsRequest: z.object({
     agentId: z.string().trim().min(1).max(80),
-    names: z.array(z.string().max(80)).max(200),
+    /** null = no restriction (every enabled skill). */
+    names: z.array(z.string().max(120)).max(2000).nullable(),
   }),
   pluginsGetAgentSkillsRequest: z.object({ agentId: z.string().trim().min(1).max(80) }),
+  pluginsInstallFromRequest: z.object({ source: z.string().trim().min(1).max(1000) }),
+  pluginsSetSkillSourceRequest: z.object({
+    id: z.string().trim().min(1).max(40),
+    enabled: z.boolean(),
+  }),
 
   terminalStartRequest: z.object({
     id: z.string().trim().min(1).max(80),
@@ -1438,9 +1447,10 @@ export interface PluginDto {
   name: string;
   version: string;
   description: string;
-  origin: 'marketplace' | 'local' | 'claude-home';
+  origin: 'marketplace' | 'git' | 'local' | 'claude-home';
   marketplaceId?: string;
-  /** For discovered plugins: where the other tool got it (e.g. a marketplace). */
+  /** Where it came from: the repo / path it was installed from, or for
+   *  discovered plugins where the other tool got it (e.g. a marketplace). */
   originSource?: string;
   enabled: boolean;
   hooksConsent: boolean;
@@ -1467,6 +1477,27 @@ export interface PluginSkillDto {
   name: string;
   description: string;
   pluginId: string | null;
+  /** Standalone skills: the folder's owner, e.g. "Claude Code", "Codex CLI". */
+  source?: string;
+}
+
+/** What Plugins → "Install from…" did. */
+export interface PluginInstallFromResponse {
+  ok: boolean;
+  kind?: 'marketplace' | 'plugin' | 'skills';
+  id?: string;
+  name?: string;
+  skills?: number;
+  error?: string;
+}
+
+/** Another tool's skill folder, discovered read-only. */
+export interface PluginSkillSourceDto {
+  id: string;
+  label: string;
+  paths: string[];
+  count: number;
+  enabled: boolean;
 }
 
 export interface PluginsListResponse {

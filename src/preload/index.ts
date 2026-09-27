@@ -332,10 +332,16 @@ const api = {
       ipcRenderer.invoke(CHANNELS.PLUGINS_LIST_SKILLS, {}),
     getAgentSkills: (agentId: string): Promise<{ names: string[] | null }> =>
       ipcRenderer.invoke(CHANNELS.PLUGINS_GET_AGENT_SKILLS, { agentId }),
-    setAgentSkills: (agentId: string, names: string[]): Promise<{ ok: boolean }> =>
+    setAgentSkills: (agentId: string, names: string[] | null): Promise<{ ok: boolean }> =>
       ipcRenderer.invoke(CHANNELS.PLUGINS_SET_AGENT_SKILLS, { agentId, names }),
     importAgents: (id: string): Promise<{ ok: boolean; count: number }> =>
       ipcRenderer.invoke(CHANNELS.PLUGINS_IMPORT_AGENTS, { id }),
+    installFrom: (source: string): Promise<import('@shared/ipc-channels').PluginInstallFromResponse> =>
+      ipcRenderer.invoke(CHANNELS.PLUGINS_INSTALL_FROM, { source }),
+    skillSources: (): Promise<{ sources: import('@shared/ipc-channels').PluginSkillSourceDto[] }> =>
+      ipcRenderer.invoke(CHANNELS.PLUGINS_SKILL_SOURCES, {}),
+    setSkillSource: (id: string, enabled: boolean): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke(CHANNELS.PLUGINS_SET_SKILL_SOURCE, { id, enabled }),
     subscribeStatus: (cb: (payload: PluginsStatusBroadcast) => void): (() => void) => {
       const handler = (_e: Electron.IpcRendererEvent, payload: PluginsStatusBroadcast): void =>
         cb(payload);

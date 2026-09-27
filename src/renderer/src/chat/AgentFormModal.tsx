@@ -3,6 +3,7 @@ import { motion } from 'framer-motion';
 import { ipc } from '../lib/ipc';
 import { agentFormSchema, AVATAR_COLORS, type AgentFormValues } from '@shared/agent-form-schema';
 import type { AgentDto } from '@shared/chat-types';
+import type { PluginSkillDto } from '@shared/ipc-channels';
 import { SYSTEM_PROMPT_PRESETS } from '@shared/system-prompt-presets';
 import { modalBackdrop, modalPanel } from '../lib/motion';
 
@@ -44,6 +45,10 @@ export function AgentFormModal({ mode, initial, onClose, onSaved }: Props): JSX.
   const [models, setModels] = useState<Array<{ name: string }>>([]);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  // Skill allowlist: null = every enabled skill; a list = only those.
+  const [skills, setSkills] = useState<PluginSkillDto[] | null>(null);
+  const [allowed, setAllowed] = useState<string[] | null>(null);
+  const [skillsDirty, setSkillsDirty] = useState(false);
 
   useEffect(() => {
     void ipc.chat.listModels().then((res) => {
@@ -52,6 +57,15 @@ export function AgentFormModal({ mode, initial, onClose, onSaved }: Props): JSX.
         setValues((v) => ({ ...v, model: res.models[0]!.name }));
       }
     });
+    void Promise.all([
+      ipc.plugins.listSkills(),
+      initial ? ipc.plugins.getAgentSkills(initial.id) : Promise.resolve({ names: null }),
+    ])
+      .then(([s, a]) => {
+        setSkills(s.skills);
+        setAllowed(a.names);
+      })
+      .catch(() => setSkills([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -74,13 +88,14 @@ export function AgentFormModal({ mode, initial, onClose, onSaved }: Props): JSX.
     }
     setSaving(true);
     try {
+      let saved: AgentDto | null = null;
       if (mode === 'create') {
-        const { agent } = await ipc.chat.createAgent(parsed.data);
-        onSaved(agent);
+        saved = (await ipc.chat.createAgent(parsed.data)).agent;
       } else if (initial) {
-        const { agent } = await ipc.chat.updateAgent({ id: initial.id, ...parsed.data });
-        onSaved(agent);
+        saved = (await ipc.chat.updateAgent({ id: initial.id, ...parsed.data })).agent;
       }
+      if (saved && skillsDirty) await ipc.plugins.setAgentSkills(saved.id, allowed);
+      if (saved) onSaved(saved);
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -215,6 +230,15 @@ export function AgentFormModal({ mode, initial, onClose, onSaved }: Props): JSX.
           </div>
         </Field>
 
+        <SkillPicker
+          skills={skills}
+          allowed={allowed}
+          onChange={(next) => {
+            setAllowed(next);
+            setSkillsDirty(true);
+          }}
+        />
+
         <Field label="Approval policy">
           <div className="flex gap-3 text-sm">
             {(['cautious', 'trusting', 'yolo'] as const).map((p) => (
@@ -260,6 +284,104 @@ export function AgentFormModal({ mode, initial, onClose, onSaved }: Props): JSX.
         </div>
       </motion.div>
     </motion.div>
+  );
+}
+
+/** Which skills this agent sees. Fewer skills = a shorter prompt, which
+ *  matters for small local models. Workspace .claude/skills always apply. */
+function SkillPicker({
+  skills,
+  allowed,
+  onChange,
+}: {
+  skills: PluginSkillDto[] | null;
+  allowed: string[] | null;
+  onChange: (next: string[] | null) => void;
+}): JSX.Element {
+  const [filter, setFilter] = useState('');
+  const total = skills?.length ?? 0;
+  const chosen = new Set(allowed ?? []);
+  const q = filter.trim().toLowerCase();
+  const shown = (skills ?? []).filter(
+    (s) => !q || s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q),
+  );
+
+  return (
+    <div className="space-y-1">
+      <span className="text-xs uppercase tracking-wider text-[var(--ink-faint)]">Skills</span>
+      {skills === null ? (
+        <div className="text-sm text-[var(--ink-faint)]">Loading skills…</div>
+      ) : total === 0 ? (
+        <div className="text-sm text-[var(--ink-faint)]">
+          No skills installed. Add some on the Plugins screen.
+        </div>
+      ) : (
+        <>
+          <div className="flex gap-4 text-sm" role="radiogroup" aria-label="Skills this agent can use">
+            <label className="flex items-center gap-1">
+              <input type="radio" name="skillMode" checked={allowed === null} onChange={() => onChange(null)} />
+              All enabled skills ({total})
+            </label>
+            <label className="flex items-center gap-1">
+              <input
+                type="radio"
+                name="skillMode"
+                checked={allowed !== null}
+                onChange={() => onChange(allowed ?? [])}
+              />
+              Only selected{allowed !== null ? ` (${chosen.size})` : ''}
+            </label>
+          </div>
+          {allowed !== null ? (
+            <div className="rounded-md border border-[var(--border)] bg-[var(--surface)] p-2 space-y-2">
+              <div className="flex gap-2 items-center">
+                <input
+                  value={filter}
+                  onChange={(e) => setFilter(e.target.value)}
+                  placeholder="Filter skills…"
+                  aria-label="Filter skills"
+                  className="flex-1 rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 py-1 text-sm"
+                />
+                <button
+                  type="button"
+                  className="btn btn-sm btn-ghost"
+                  onClick={() => onChange([...new Set([...chosen, ...shown.map((s) => s.name)])])}
+                >
+                  Select shown
+                </button>
+                <button type="button" className="btn btn-sm btn-ghost" onClick={() => onChange([])}>
+                  Clear
+                </button>
+              </div>
+              <div className="max-h-48 overflow-y-auto space-y-1">
+                {shown.map((s) => (
+                  <label key={s.name} className="flex items-start gap-2 text-sm" title={s.description}>
+                    <input
+                      type="checkbox"
+                      className="mt-1"
+                      checked={chosen.has(s.name)}
+                      onChange={(e) =>
+                        onChange(
+                          e.target.checked
+                            ? [...chosen, s.name]
+                            : [...chosen].filter((n) => n !== s.name),
+                        )
+                      }
+                    />
+                    <span className="min-w-0">
+                      <span className="font-mono">{s.name}</span>
+                      <span className="text-[var(--ink-faint)]"> · {s.pluginId || s.source || 'standalone'}</span>
+                      <span className="block text-xs text-[var(--ink-faint)] truncate">{s.description}</span>
+                    </span>
+                  </label>
+                ))}
+                {shown.length === 0 ? <div className="text-xs text-[var(--ink-faint)]">No match.</div> : null}
+              </div>
+            </div>
+          ) : null}
+        </>
+      )}
+    </div>
   );
 }
 

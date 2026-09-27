@@ -79,9 +79,14 @@ export class AgentSessionManager {
       ? `\n\n## Project rules (from CLAUDE.md)\n${projectRules}`
       : '';
 
-    // Skills available to this agent (from installed plugins + standalone).
-    // The model sees name+description here and loads full instructions via the
-    // `skill` tool when one applies.
+    const override = this.opts.getModelOverride?.(chatId)?.trim();
+    const wsOverride = this.opts.getWorkspaceOverride?.(chatId)?.trim();
+    const workspacePath = wsOverride && wsOverride.length > 0 ? wsOverride : agent.workspacePath;
+
+    // Skills available to this agent (installed plugins, skill folders, and
+    // the workspace's own .claude/skills). The model sees name+description
+    // here and loads full instructions via the `skill` tool when one applies.
+    await this.opts.skillRegistry?.refreshWorkspace(agent.id, workspacePath);
     const skills = this.opts.skillRegistry?.descriptions(agent.id) ?? [];
     const skillsBlock = buildSkillsBlock(skills);
     // Connected CLIs — only meaningful to agents that can shell out, since they
@@ -90,9 +95,6 @@ export class AgentSessionManager {
       ? buildCliContext(this.opts.getConnectedClis?.() ?? [])
       : '';
 
-    const override = this.opts.getModelOverride?.(chatId)?.trim();
-    const wsOverride = this.opts.getWorkspaceOverride?.(chatId)?.trim();
-    const workspacePath = wsOverride && wsOverride.length > 0 ? wsOverride : agent.workspacePath;
     const effectiveAgent = {
       ...agent,
       workspacePath,

@@ -38,6 +38,7 @@ import { AgentGenerator } from './agent/agent-generator';
 import { McpManager } from './services/mcp-manager';
 import { configureWebSearch, readWebSearchConfig } from './services/web-search';
 import { PluginManager } from './services/plugin-manager';
+import { knownSkillSources } from './services/plugin-sources';
 import { SkillRegistry } from './services/skill-registry';
 import { HookRunner } from './agent/hook-runner';
 import { SecondBrain } from './services/second-brain';
@@ -403,12 +404,13 @@ app.whenReady().then(async () => {
   });
 
   // Claude Code-format plugins + skills. Installed under userData; also
-  // discovers (read-only) the user's ~/.claude plugins + standalone skills.
+  // discovers (read-only) the user's ~/.claude plugins, and skills from
+  // ~/.claude/skills and other coding agents' folders (toggle per source).
   const claudeHome = join(app.getPath('home'), '.claude');
   const pluginManager = new PluginManager({
     root: join(app.getPath('userData'), 'plugins'),
     claudeHome,
-    skillsHome: join(claudeHome, 'skills'),
+    skillSources: knownSkillSources(app.getPath('home')),
   });
   try {
     await pluginManager.load();

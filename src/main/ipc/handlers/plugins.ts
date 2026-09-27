@@ -5,9 +5,11 @@ import { mkdir } from 'node:fs/promises';
 import { CHANNELS, schemas } from '@shared/ipc-channels';
 import type {
   PluginDto,
+  PluginInstallFromResponse,
   PluginMarketplaceDto,
   PluginMarketplacePluginDto,
   PluginSkillDto,
+  PluginSkillSourceDto,
 } from '@shared/ipc-channels';
 import type { PluginManager } from '@main/services/plugin-manager';
 import type { McpManager } from '@main/services/mcp-manager';
@@ -24,7 +26,7 @@ function toDto(p: InstalledPlugin): PluginDto {
     description: p.description,
     origin: p.origin.kind,
     ...(p.origin.kind === 'marketplace' ? { marketplaceId: p.origin.marketplaceId } : {}),
-    ...(p.origin.kind === 'claude-home' && p.origin.source ? { originSource: p.origin.source } : {}),
+    ...(p.origin.kind !== 'marketplace' && p.origin.source ? { originSource: p.origin.source } : {}),
     enabled: p.enabled,
     hooksConsent: p.hooksConsent,
     readOnly: p.readOnly,
@@ -117,6 +119,27 @@ export function registerPluginHandlers(deps: {
     return { ok: true, plugin: toDto(installed) };
   });
 
+  // One box: owner/repo, git URL, folder, or .zip/.plugin/.skill file.
+  ipcMain.handle(CHANNELS.PLUGINS_INSTALL_FROM, async (_e, raw): Promise<PluginInstallFromResponse> => {
+    const { source } = schemas.pluginsInstallFromRequest.parse(raw);
+    try {
+      const r = await pluginManager.installFrom(source);
+      return { ok: true, ...r };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle(CHANNELS.PLUGINS_SKILL_SOURCES, (): { sources: PluginSkillSourceDto[] } => ({
+    sources: pluginManager.listSkillSources(),
+  }));
+
+  ipcMain.handle(CHANNELS.PLUGINS_SET_SKILL_SOURCE, async (_e, raw) => {
+    const { id, enabled } = schemas.pluginsSetSkillSourceRequest.parse(raw);
+    await pluginManager.setSkillSourceEnabled(id, enabled);
+    return { ok: true };
+  });
+
   ipcMain.handle(CHANNELS.PLUGINS_UNINSTALL, async (_e, raw) => {
     const { id } = schemas.pluginsIdRequest.parse(raw);
     await pluginManager.uninstall(id);
@@ -138,7 +161,12 @@ export function registerPluginHandlers(deps: {
   ipcMain.handle(CHANNELS.PLUGINS_LIST_SKILLS, () => {
     const skills: PluginSkillDto[] = pluginManager
       .skills()
-      .map((s) => ({ name: s.name, description: s.description, pluginId: s.pluginId }));
+      .map((s) => ({
+        name: s.name,
+        description: s.description,
+        pluginId: s.pluginId,
+        ...(s.source ? { source: s.source } : {}),
+      }));
     return { skills };
   });
 
