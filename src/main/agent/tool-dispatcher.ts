@@ -28,7 +28,8 @@ import { rsi, macd, atr, bollinger, sma, ema, swingLevels, trend } from '@shared
 import { detectPatterns } from '@shared/patterns';
 import { forecastCone } from '@shared/forecast';
 import { buildStockChart } from '@shared/stock-chart';
-import { duckDuckGoSearch } from '@main/services/web-search';
+import { searchWeb } from '@main/services/web-search';
+import type { WebSearchToolOutput } from '@shared/web-search-result';
 import type { Range } from '@shared/market-types';
 
 export const MAX_TOOL_OUTPUT_BYTES = 100_000;
@@ -350,8 +351,11 @@ export class ToolDispatcher {
         case 'web_search': {
           const a = parsed.data as z.infer<typeof argsSchemas.web_search>;
           try {
-            const hits = await duckDuckGoSearch(a.query, a.limit ?? 5);
-            return ok(toolCallId, name, JSON.stringify(hits));
+            const res = await searchWeb(a.query, a.limit ?? 5);
+            const out: WebSearchToolOutput = { provider: res.provider, results: res.hits };
+            if (res.note) out.note = res.note;
+            if (res.text) out.text = res.text;
+            return ok(toolCallId, name, JSON.stringify(out));
           } catch (err) {
             return failure(
               toolCallId,

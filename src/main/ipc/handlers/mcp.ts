@@ -1,6 +1,12 @@
 import { ipcMain } from 'electron';
 import { broadcast } from '@main/util/broadcast';
-import { CHANNELS, schemas } from '@shared/ipc-channels';
+import {
+  CHANNELS,
+  schemas,
+  type WebSearchMcpToolDto,
+  type WebSearchTestResponse,
+} from '@shared/ipc-channels';
+import { searchWeb } from '@main/services/web-search';
 import type { McpManager } from '@main/services/mcp-manager';
 import type { SettingsService } from '@main/services/settings-service';
 import type { McpServerConfig } from '@main/services/mcp-client';
@@ -142,6 +148,45 @@ export function registerMcpHandlers(deps: {
       return { entries: await searchMcpRegistry(query ?? '') };
     } catch (err) {
       return { entries: [], error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  // Settings → Web search: tools on connected servers, search-ish ones first.
+  ipcMain.handle(CHANNELS.WEB_SEARCH_MCP_TOOLS, (): { tools: WebSearchMcpToolDto[] } => {
+    const names = new Map(deps.manager.statusList().map((s) => [s.id, s.name]));
+    const tools = deps.manager.toolSpecs().map((t): WebSearchMcpToolDto => {
+      const rest = t.name.replace(/^mcp__/, '');
+      const sep = rest.indexOf('__');
+      const serverId = sep > 0 ? rest.slice(0, sep) : rest;
+      const tool = sep > 0 ? rest.slice(sep + 2) : rest;
+      return {
+        name: t.name,
+        server: names.get(serverId) ?? serverId,
+        tool,
+        description: (t.description ?? '').slice(0, 200),
+        searchLike: /search|crawl|scrape|browse|fetch|web/i.test(tool),
+      };
+    });
+    tools.sort((a, b) => Number(b.searchLike) - Number(a.searchLike) || a.name.localeCompare(b.name));
+    return { tools };
+  });
+
+  // Runs one real search with whatever is saved now (keys, provider, tool).
+  ipcMain.handle(CHANNELS.WEB_SEARCH_TEST, async (_e, raw): Promise<WebSearchTestResponse> => {
+    const { query } = schemas.webSearchTestRequest.parse(raw ?? {});
+    try {
+      const res = await searchWeb(query ?? 'Flowstate desktop AI agents', 3);
+      const count = res.hits.length || (res.text ? 1 : 0);
+      const sample = res.hits[0]?.title ?? res.text?.slice(0, 120);
+      return {
+        ok: count > 0,
+        provider: res.provider,
+        count,
+        ...(res.note ? { note: res.note } : {}),
+        ...(sample ? { sample } : {}),
+      };
+    } catch (err) {
+      return { ok: false, provider: '', count: 0, error: err instanceof Error ? err.message : String(err) };
     }
   });
 }

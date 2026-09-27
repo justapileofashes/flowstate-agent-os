@@ -1,5 +1,6 @@
-// Web skills. web.search: Tavily when a key is connected, keyless
-// DuckDuckGo/Wikipedia otherwise. web.browse: the Stagehand stand-in —
+// Web skills. web.search: Tavily when the company has a key connected,
+// otherwise the app-wide search provider from Settings (keyless
+// DuckDuckGo/Wikipedia by default). web.browse: the Stagehand stand-in —
 // SSRF-safe fetch (public hosts only, re-checked on every redirect, company
 // allow/block lists, daily page cap) → readable text, links, prices, plus an
 // optional cheap-model `extract` pass that returns structured JSON.
@@ -8,7 +9,7 @@
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { z } from 'zod';
-import { duckDuckGoSearch } from '@main/services/web-search';
+import { searchWeb } from '@main/services/web-search';
 import { startOfDay } from '../db/util';
 import { extractJsonObject } from '../providers/gateway';
 import { stripHtml } from '../guardrails/scrub';
@@ -182,11 +183,16 @@ export const webSearch: Skill<z.infer<typeof searchArgs>> = {
   async execute(ctx, a) {
     const limit = a.limit ?? 5;
     const tavily = ctx.credentials.resolve('tavily');
-    const hits = tavily
-      ? await tavilySearch(ctx, tavily.secret.reveal(), a.query, limit)
-      : await duckDuckGoSearch(a.query, limit);
-    if (!hits.length) return { ok: true, content: `No results for "${a.query}".`, empty: true };
-    return { ok: true, content: JSON.stringify(hits, null, 1), data: hits };
+    if (tavily) {
+      const hits = await tavilySearch(ctx, tavily.secret.reveal(), a.query, limit);
+      if (!hits.length) return { ok: true, content: `No results for "${a.query}".`, empty: true };
+      return { ok: true, content: JSON.stringify(hits, null, 1), data: hits };
+    }
+    // No company key: the app-wide provider from Settings (built-in by default).
+    const res = await searchWeb(a.query, limit);
+    if (!res.hits.length && !res.text) return { ok: true, content: `No results for "${a.query}".`, empty: true };
+    const payload = { provider: res.provider, ...(res.note ? { note: res.note } : {}), results: res.hits, ...(res.text ? { text: res.text } : {}) };
+    return { ok: true, content: JSON.stringify(payload, null, 1), data: res.hits };
   },
 };
 

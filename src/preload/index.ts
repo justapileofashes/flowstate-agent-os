@@ -295,6 +295,10 @@ const api = {
       query: string,
     ): Promise<{ entries: import('@shared/mcp-registry').RegistryEntryDto[]; error?: string }> =>
       ipcRenderer.invoke(CHANNELS.MCP_REGISTRY_SEARCH, { query }),
+    webSearchTools: (): Promise<{ tools: import('@shared/ipc-channels').WebSearchMcpToolDto[] }> =>
+      ipcRenderer.invoke(CHANNELS.WEB_SEARCH_MCP_TOOLS, {}),
+    webSearchTest: (query?: string): Promise<import('@shared/ipc-channels').WebSearchTestResponse> =>
+      ipcRenderer.invoke(CHANNELS.WEB_SEARCH_TEST, query ? { query } : {}),
     subscribeStatus: (cb: (payload: McpStatusBroadcast) => void): (() => void) => {
       const handler = (_e: Electron.IpcRendererEvent, payload: McpStatusBroadcast): void =>
         cb(payload);

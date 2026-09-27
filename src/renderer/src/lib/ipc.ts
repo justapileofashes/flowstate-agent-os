@@ -166,6 +166,10 @@ interface FlowstateApi {
     registrySearch: (
       query: string,
     ) => Promise<{ entries: import('@shared/mcp-registry').RegistryEntryDto[]; error?: string }>;
+    /** Tools on connected MCP servers, for Settings → Web search. */
+    webSearchTools: () => Promise<{ tools: import('@shared/ipc-channels').WebSearchMcpToolDto[] }>;
+    /** One real search with the saved web search settings. */
+    webSearchTest: (query?: string) => Promise<import('@shared/ipc-channels').WebSearchTestResponse>;
     subscribeStatus: (cb: (payload: McpStatusBroadcast) => void) => () => void;
   };
   plugins: {

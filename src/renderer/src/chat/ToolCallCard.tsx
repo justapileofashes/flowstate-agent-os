@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ToolCallView } from '../lib/chat-stream-helpers';
+import { parseWebSearchOutput } from '@shared/web-search-result';
 
 interface Props {
   call: ToolCallView;
@@ -131,15 +132,8 @@ function WroteFile({ args }: { args: unknown }): JSX.Element | null {
 }
 
 function CitationCards({ content }: { content: string }): JSX.Element | null {
-  const hits = (() => {
-    try {
-      const parsed = JSON.parse(content);
-      return Array.isArray(parsed) ? (parsed as Array<{ title?: string; snippet?: string; url?: string }>) : [];
-    } catch {
-      return [];
-    }
-  })();
-  const shown = hits.slice(0, 5);
+  const output = parseWebSearchOutput(content);
+  const shown = (output?.results ?? []).slice(0, 5);
   // "Reading" focus rotates through the cards every ~2s so the user can
   // see which source the agent is skimming. The active snippet scrolls
   // through its text via a CSS-keyframe translate, simulating the agent's
@@ -151,10 +145,16 @@ function CitationCards({ content }: { content: string }): JSX.Element | null {
     return () => clearInterval(id);
   }, [shown.length]);
 
-  if (shown.length === 0) return null;
+  if (!output || (shown.length === 0 && !output.provider)) return null;
 
   return (
     <div className="args" style={{ display: 'grid', gap: 6, padding: '8px 10px' }}>
+      {output.provider ? (
+        <div style={{ fontSize: 10, color: 'var(--ink-faint)' }}>
+          via {output.provider}
+          {output.note ? <span style={{ color: 'var(--warn, var(--ink-muted))' }}> · {output.note}</span> : null}
+        </div>
+      ) : null}
       {shown.map((h, i) => {
         const active = i === activeIdx;
         const snippet = h.snippet ?? '';

@@ -4,6 +4,7 @@ import { ipcErrorMessage } from '../lib/ipc-error';
 import type { OllamaCloudStatusResponse } from '@shared/ipc-channels';
 import { ShortcutsList } from '../chat/ShortcutsModal';
 import { McpServersCard } from './McpServersCard';
+import { WebSearchCard } from './WebSearchCard';
 import { DevToolsSettings } from './DevToolsSettings';
 import { BrandLogo } from '../lib/brand-logos';
 
@@ -354,6 +355,8 @@ export function Settings({ onOpenConnectors }: { onOpenConnectors?: () => void }
           }}
         />
       </section>
+
+      <WebSearchCard {...(onOpenConnectors ? { onOpenConnectors } : {})} />
 
       <section className="settings-section">
         <div className="head"><h3>Workspaces</h3></div>

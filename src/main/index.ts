@@ -36,6 +36,7 @@ import { Orchestrator } from './agent/orchestrator';
 import { Coordinator } from './agent/coordinator';
 import { AgentGenerator } from './agent/agent-generator';
 import { McpManager } from './services/mcp-manager';
+import { configureWebSearch, readWebSearchConfig } from './services/web-search';
 import { PluginManager } from './services/plugin-manager';
 import { SkillRegistry } from './services/skill-registry';
 import { HookRunner } from './agent/hook-runner';
@@ -393,6 +394,13 @@ app.whenReady().then(async () => {
   const audit = new AuditLogger(auditRepo);
   const approvalGate = new ApprovalGate(send, undefined, audit);
   const mcpManager = new McpManager();
+  // web_search (chat tools, team runs, business agent) follows Settings →
+  // Web search; read per call so a changed provider applies immediately.
+  configureWebSearch({
+    config: () => readWebSearchConfig((k) => settings.get(k)),
+    callMcp: (tool, args) => mcpManager.callTool(tool, args),
+    mcpSchema: (tool) => mcpManager.toolSpecs().find((t) => t.name === tool)?.parameters,
+  });
 
   // Claude Code-format plugins + skills. Installed under userData; also
   // discovers (read-only) the user's ~/.claude plugins + standalone skills.

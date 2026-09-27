@@ -48,6 +48,8 @@ export const CHANNELS = {
   MCP_TEST: 'mcp:test',
   MCP_REGISTRY_SEARCH: 'mcp:registry-search',
   MCP_STATUS: 'mcp:status',
+  WEB_SEARCH_MCP_TOOLS: 'web-search:mcp-tools',
+  WEB_SEARCH_TEST: 'web-search:test',
   FLOWCLAW_LIST: 'flowclaw:list',
   FLOWCLAW_SAVE: 'flowclaw:save',
   FLOWCLAW_TEST: 'flowclaw:test',
@@ -633,6 +635,7 @@ export const schemas = {
   }),
   mcpSaveResponse: z.object({ ok: z.boolean() }),
   mcpRegistrySearchRequest: z.object({ query: z.string().max(200).optional() }),
+  webSearchTestRequest: z.object({ query: z.string().trim().min(1).max(300).optional() }),
   mcpTestRequest: z.object({
     server: z.object({
       id: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,30}$/i),
@@ -1490,6 +1493,26 @@ export interface TerminalDataBroadcast {
 export interface TerminalExitBroadcast {
   id: string;
   code: number | null;
+}
+
+/** A tool on a connected MCP server that Settings → Web search can use. */
+export interface WebSearchMcpToolDto {
+  /** Full routed name: mcp__<serverId>__<tool>. */
+  name: string;
+  server: string;
+  tool: string;
+  description: string;
+  /** Name looks like search/crawl/browse — listed first. */
+  searchLike: boolean;
+}
+
+export interface WebSearchTestResponse {
+  ok: boolean;
+  provider: string;
+  count: number;
+  note?: string;
+  sample?: string;
+  error?: string;
 }
 
 /** Result of a transient connection test — spawn, initialize, list tools,
