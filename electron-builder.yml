@@ -91,9 +91,9 @@ appx:
 # Release (see README → Release): bump `version` in package.json, then with a
 # GitHub token that can write releases in GH_TOKEN:
 #   npm run package -- --publish always
-# electron-builder creates a draft release; publish it on GitHub to ship.
+# electron-builder creates a draft release (its default for GitHub); publish
+# it on GitHub to ship.
 publish:
   - provider: github
     owner: justapileofashes
     repo: flowstate-agent-os
-    releaseType: draft
