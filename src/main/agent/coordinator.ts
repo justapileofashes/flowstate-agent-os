@@ -620,12 +620,6 @@ ${list}
 When the (updated) task is fully complete, end with ${COMPLETION_TOKEN}.`;
 }
 
-interface RawPlan {
-  summary?: unknown;
-  tasks?: unknown;
-  synthesizer_agent_id?: unknown;
-}
-
 /**
  * Pull the most plausible JSON object out of a model reply.
  *  - Strips markdown ```json fences.

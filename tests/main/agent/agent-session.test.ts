@@ -173,6 +173,7 @@ describe('AgentSession — model fallback', () => {
 
   it('ends with a readable error (not a thrown one) when no fallback is left', async () => {
     class DownProvider extends FakeProvider {
+      // eslint-disable-next-line require-yield -- fails before producing anything
       async *chatStream(): AsyncGenerator<ProviderDelta> {
         throw new Error('fetch failed');
       }

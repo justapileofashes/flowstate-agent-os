@@ -97,7 +97,6 @@ class FakeGateway implements WebSocketLike {
     queueMicrotask(() => this.emit('open', undefined));
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   addEventListener(type: string, listener: any): void {
     (this.listeners[type] ??= []).push(listener);
   }

@@ -122,7 +122,7 @@ describe('FlowclawConnections.run', () => {
 
   it('runs an OpenClaw connection over the injected WS factory', async () => {
     const reg = new FlowclawConnections(fakeStore([openclaw], { o1: 'tok' }), {
-      wsFactory: (url) => {
+      wsFactory: (_url) => {
         // Minimal faithful gateway: ack connect, emit one text event, finish ok.
         const listeners: Record<string, Array<(ev: unknown) => void>> = {};
         const on = (t: string, l: (ev: unknown) => void): void => {

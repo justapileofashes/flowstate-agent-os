@@ -4,7 +4,7 @@
 // ready chart. Fast + fully testable. The Phase-2 LLM agents add fundamentals/
 // news depth on top; this is the technical backbone the UI calls directly.
 import type { MarketDataService } from './market-data';
-import type { Bar, Range } from '@shared/market-types';
+import type { Range } from '@shared/market-types';
 import { rsi, macd, atr, bollinger, swingLevels, trend } from '@shared/indicators';
 import { detectPatterns, type DetectedPattern } from '@shared/patterns';
 import { synthesize, type Factor, type Direction } from '@shared/signal';

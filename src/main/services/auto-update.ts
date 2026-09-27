@@ -17,12 +17,10 @@ export function initAutoUpdate(): void {
       autoUpdater.autoInstallOnAppQuit = true;
       autoUpdater.on('error', (err: Error) => {
         // A missing/unreachable feed throws here — log and move on.
-        // eslint-disable-next-line no-console
         console.warn('[update] check failed:', err?.message ?? err);
       });
       await autoUpdater.checkForUpdates();
     } catch (err) {
-      // eslint-disable-next-line no-console
       console.warn('[update] disabled:', err instanceof Error ? err.message : String(err));
     }
   })();

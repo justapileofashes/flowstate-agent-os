@@ -117,7 +117,6 @@ export class McpClient extends EventEmitter {
     this.child.stderr.on('data', (chunk: string) => {
       this.stderrTail = (this.stderrTail + chunk).slice(-2000);
       // Best-effort log; do not throw on noisy servers
-      // eslint-disable-next-line no-console
       console.warn(`[mcp:${this.config.id}] ${chunk.trim()}`);
     });
     this.child.on('error', (err) => {
@@ -241,7 +240,6 @@ export class McpClient extends EventEmitter {
     try {
       msg = JSON.parse(line) as typeof msg;
     } catch {
-      // eslint-disable-next-line no-console
       console.warn(`[mcp:${this.config.id}] invalid JSON: ${line.slice(0, 200)}`);
       return;
     }

@@ -58,6 +58,7 @@ export function mapAlpacaStatus(s: string): OrderStatus {
   }
 }
 
+/* eslint-disable @typescript-eslint/no-explicit-any -- Alpaca order JSON, read field by field */
 function mapOrder(o: any): BrokerOrderState {
   const legs = Array.isArray(o.legs) ? o.legs : [];
   return {
@@ -74,6 +75,7 @@ function mapOrder(o: any): BrokerOrderState {
     updatedAt: Date.parse(o.updated_at ?? '') || 0,
   };
 }
+/* eslint-enable @typescript-eslint/no-explicit-any */
 
 export class AlpacaBroker implements BrokerAdapter {
   readonly name: string;

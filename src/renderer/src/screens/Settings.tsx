@@ -485,29 +485,6 @@ function OllamaCard({ loading, ollama, onRecheck }: OllamaCardProps): JSX.Elemen
   );
 }
 
-interface WorkspaceCardProps {
-  loading: boolean;
-  workspacesDir: string;
-}
-
-function WorkspaceCard({ loading, workspacesDir }: WorkspaceCardProps): JSX.Element {
-  return (
-    <section className="card">
-      <h3 className="text-base font-semibold">Workspaces directory</h3>
-      <p className="text-sm text-[var(--ink-muted)] mt-1 mb-3">
-        Each agent gets a sandboxed folder created inside this directory.
-      </p>
-      {loading ? (
-        <div className="h-5 w-2/3 bg-[var(--surface-2)] rounded animate-pulse" />
-      ) : (
-        <code className="text-sm break-all kbd inline-block max-w-full">
-          {workspacesDir || '—'}
-        </code>
-      )}
-    </section>
-  );
-}
-
 interface CloudConnectorProps {
   provider: 'anthropic' | 'openai' | 'gemini' | 'perplexity' | 'groq' | 'mistral' | 'xai';
   label: string;

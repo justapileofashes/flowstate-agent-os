@@ -7,7 +7,6 @@ import type { JSX } from 'react';
 import {
   siGit,
   siGithub,
-  siGoogledrive,
   siBrave,
   siGmail,
   siTelegram,

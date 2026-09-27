@@ -160,15 +160,6 @@ function idFor(prefix: string, name: string): string {
   return `${prefix}-${slug(name)}`.slice(0, 41).replace(/-+$/, '');
 }
 
-async function listDirs(path: string): Promise<string[]> {
-  try {
-    const entries = await fs.readdir(path, { withFileTypes: true });
-    return entries.filter((e) => e.isDirectory()).map((e) => e.name);
-  } catch {
-    return [];
-  }
-}
-
 export interface PluginManagerOpts {
   /** Root for marketplaces/installed/registry.json. */
   root: string;

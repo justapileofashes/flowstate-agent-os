@@ -32,6 +32,7 @@ describe('inline images', () => {
   it('other providers get a note instead of the base64', async () => {
     const seen: string[] = [];
     class Spy extends FakeProvider {
+      // eslint-disable-next-line require-yield -- only records what it was sent
       async *chatStream(opts: ChatStreamOpts): AsyncGenerator<never> {
         seen.push(opts.messages[0]!.content);
       }

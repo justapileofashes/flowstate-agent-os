@@ -174,7 +174,6 @@ export function Models({ onAgentsChanged }: { onAgentsChanged?: () => void } = {
                 if (res.matches.some((m) => m.changed)) onAgentsChanged?.();
               } catch (err) {
                 setAutoAssign({ running: false, matches: [] });
-                // eslint-disable-next-line no-console
                 console.warn(err);
               }
             }}

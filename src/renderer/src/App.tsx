@@ -189,8 +189,7 @@ export function App(): JSX.Element {
       // Pop-out window: jump straight into the chat we were launched with.
       if (popoutParams) {
         const a =
-          list.find((x) => x.id === popoutParams.agentId) ??
-          list.find((x) => true);
+          list.find((x) => x.id === popoutParams.agentId) ?? list[0];
         if (a) {
           setView({ kind: 'chat', agent: a, openChatId: popoutParams.chatId });
           return;

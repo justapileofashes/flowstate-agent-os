@@ -39,7 +39,6 @@ export class TerminalService {
       try {
         this.ptyModule = this.loadPty();
       } catch (err) {
-        // eslint-disable-next-line no-console
         console.warn('[terminal] node-pty unavailable, using piped shells:', err);
         this.ptyModule = null;
       }

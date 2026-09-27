@@ -163,7 +163,7 @@ describe('OllamaProvider.chatStream', () => {
 
   it('passes signal to fetch', async () => {
     const fetchMock = vi.fn(
-      async (_url: string, init?: RequestInit) =>
+      async (_url: string, _init?: RequestInit) =>
         new Response(
           ndjsonStream([
             JSON.stringify({
