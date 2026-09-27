@@ -1,6 +1,6 @@
 // Full-setup backup. Bundles your agents + non-secret settings into one
 // portable JSON file so you can move to a new machine or restore after a wipe.
-// Secrets (API keys, license tokens) are DELIBERATELY excluded — a backup is a
+// Secrets (API keys, tokens) are DELIBERATELY excluded — a backup is a
 // shareable/cloud-stored artifact and must never carry credentials. Pure:
 // serialize/parse only; file IO + agent creation live in the IPC handler.
 
@@ -32,7 +32,8 @@ const backupSchema = z.object({
 });
 export type Backup = z.infer<typeof backupSchema>;
 
-/** Settings keys never written to a backup (secrets + machine-local cache). */
+/** Settings keys never written to a backup (secrets + machine-local cache).
+ *  `license.` covers tokens from old builds (migration 010 deletes them). */
 const EXCLUDED_SETTING_PREFIXES = ['license.', 'chat_model_override:', 'chat_workspace_override:'];
 
 function isExcludedSetting(key: string): boolean {

@@ -30,8 +30,6 @@ export const SECRET_SETTING_KEYS: ReadonlySet<string> = new Set([
   'alpaca_live_secret_key',
   'trader_data_key_id',
   'trader_data_secret_key',
-  'license.jwt',
-  'license.refreshToken',
 ]);
 
 export class SettingsService {

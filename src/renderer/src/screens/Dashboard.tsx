@@ -24,7 +24,6 @@ interface Props {
     swarm?: string[],
     team?: boolean,
   ) => void;
-  onTeamRun: (text: string) => void;
 }
 
 function dateLabel(): string {
@@ -47,7 +46,6 @@ export function Dashboard({
   onOpenChat,
   onAgentsChanged,
   onRouted,
-  onTeamRun,
 }: Props): JSX.Element {
   const [newAgent, setNewAgent] = useState<'simple' | 'manual' | null>(null);
   const [showAllAgents, setShowAllAgents] = useState(false);
@@ -84,7 +82,7 @@ export function Dashboard({
         return (
           <div key="composer">
             <div style={{ margin: '24px 48px 0' }}>
-              <GlobalAskBox onRouted={onRouted} onTeamRun={onTeamRun} seed={askSeed} />
+              <GlobalAskBox onRouted={onRouted} seed={askSeed} />
               <SmartChips
                 onRouted={onRouted}
                 onFill={(text) => setAskSeed((s) => ({ text, nonce: (s?.nonce ?? 0) + 1 }))}

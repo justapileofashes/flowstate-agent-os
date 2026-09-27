@@ -13,14 +13,11 @@ interface Props {
     swarm?: string[],
     team?: boolean,
   ) => void;
-  /** Legacy hook from when Team Run lived in its own modal. Kept so the
-   *  host can clear any stale team-prompt state when a route fires. */
-  onTeamRun: (text: string) => void;
   /** Pre-fill the box (bump `nonce` to re-apply the same text). */
   seed?: { text: string; nonce: number } | null;
 }
 
-export function GlobalAskBox({ onRouted, onTeamRun, seed }: Props): JSX.Element {
+export function GlobalAskBox({ onRouted, seed }: Props): JSX.Element {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -53,7 +50,6 @@ export function GlobalAskBox({ onRouted, onTeamRun, seed }: Props): JSX.Element 
       const res = await ipc.chat.route(trimmed);
       onRouted(res.agentId, res.chatId, trimmed, res.reasoning, res.fallback, res.swarm, res.team);
       setText('');
-      onTeamRun('');
     } catch (err) {
       setError(ipcErrorMessage(err));
     } finally {

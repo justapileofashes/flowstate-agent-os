@@ -30,11 +30,9 @@ import { OnboardingTour } from './chat/OnboardingTour';
 import { ClisOnboardingModal } from './chat/ClisOnboardingModal';
 import { UpdateToast } from './chat/UpdateToast';
 import { AnimatePresence, motion } from 'framer-motion';
-import { RoutingToast, type RoutingToastInfo } from './chat/RoutingToast';
 import { ModelPullerModal } from './chat/ModelPullerModal';
 import { CommandPalette } from './chat/CommandPalette';
 import { AgentPackRow } from './chat/AgentPackRow';
-import { TeamRunModal } from './chat/TeamRunModal';
 import { ShortcutsModal } from './chat/ShortcutsModal';
 import { TitleBar } from './chat/TitleBar';
 import { ChatHistory } from './chat/Sidebar';
@@ -62,13 +60,11 @@ export function App(): JSX.Element {
   const [recentChats, setRecentChats] = useState<RecentChat[]>([]);
   const [view, setView] = useState<View>({ kind: 'settings' });
   const [showPalette, setShowPalette] = useState(false);
-  const [toast, setToast] = useState<RoutingToastInfo | null>(null);
   const [pendingChat, setPendingChat] = useState<{ chatId: string; firstMessage: string } | null>(null);
   const [missingModels, setMissingModels] = useState<string[] | null>(null);
   const [ollamaReachable, setOllamaReachable] = useState<boolean | null>(null);
   const [ollamaStarting, setOllamaStarting] = useState(false);
   const [ollamaStartError, setOllamaStartError] = useState<string | null>(null);
-  const [teamPrompt, setTeamPrompt] = useState<string | null>(null);
   const [streamingChatIds, setStreamingChatIds] = useState<Set<string>>(new Set());
   const [activeStreams, setActiveStreams] = useState<ActiveStreamsBroadcast['active']>([]);
   const [bgApprovals, setBgApprovals] = useState<GlobalApprovalRequest[]>([]);
@@ -127,8 +123,7 @@ export function App(): JSX.Element {
           }
         }
         if (!agent) return;
-        // RoutingToast intentionally suppressed — routing now happens
-        // instantly and the user lands directly in the chat session.
+        // Routing is instant: land directly in the chat session.
         setView({ kind: 'chat', agent, openChatId: chatId });
         // In team mode the backend already persisted the user prompt + is
         // running the coordinator in the background. Skip pendingChat so
@@ -556,11 +551,6 @@ export function App(): JSX.Element {
                 onOpenChat={(agent) => openChat(agent)}
                 onAgentsChanged={() => void refreshAgents()}
                 onRouted={handleRouted}
-                onTeamRun={() => {
-                  // Legacy hook — team mode now routes through the regular
-                  // solo flow + chat session. The modal is no longer used.
-                  setTeamPrompt(null);
-                }}
               />
             ) : (
               <Chat
@@ -608,46 +598,6 @@ export function App(): JSX.Element {
             onOpenSettings={() => setView({ kind: 'settings' })}
             onOpenDashboard={() => setView({ kind: 'dashboard' })}
             onOpenAgent={(a) => openChat(a)}
-          />
-        ) : null}
-        {toast ? (
-          <RoutingToast key="toast" info={toast} onDismiss={() => setToast(null)} />
-        ) : null}
-        {teamPrompt ? (
-          <TeamRunModal
-            key="team-run"
-            prompt={teamPrompt}
-            agents={agents}
-            onClose={() => setTeamPrompt(null)}
-            onSessionCreated={async (agentId, chatId) => {
-              setTeamPrompt(null);
-              const fresh = await refreshAgents();
-              await refreshRecentChats();
-              const agent = fresh.find((a) => a.id === agentId) ?? agents.find((a) => a.id === agentId);
-              if (agent) {
-                openChat(agent, chatId);
-              } else {
-                // fallback: still route to chat shell so user sees session even if
-                // agent metadata not yet fetched
-                openChat(
-                  {
-                    id: agentId,
-                    name: 'Team session',
-                    description: '',
-                    specialtyTags: [],
-                    avatarColor: '#a09a8e',
-                    systemPrompt: '',
-                    model: '',
-                    workspacePath: '',
-                    toolPerms: { shell_enabled: false, delete_enabled: false },
-                    approvalPolicy: 'cautious',
-                    createdAt: 0,
-                    updatedAt: 0,
-                  },
-                  chatId,
-                );
-              }
-            }}
           />
         ) : null}
         {showShortcuts ? (

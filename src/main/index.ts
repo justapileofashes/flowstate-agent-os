@@ -234,7 +234,7 @@ app.whenReady().then(async () => {
     { useSystemPicker: false },
   );
 
-  // Encrypt secret settings (API keys, license tokens) at rest via the OS
+  // Encrypt secret settings (API keys, broker keys) at rest via the OS
   // keychain so the SQLite file never holds them in plaintext.
   const secretStore = new SecretStore(electronSafeStorageBackend());
   const settings = new SettingsService(db, secretStore);
