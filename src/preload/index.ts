@@ -349,6 +349,21 @@ const api = {
       return () => ipcRenderer.removeListener(CHANNELS.PLUGINS_STATUS, handler);
     },
   },
+  updates: {
+    status: (): Promise<import('@shared/ipc-channels').UpdateStatusDto> =>
+      ipcRenderer.invoke(CHANNELS.UPDATE_GET_STATUS, {}),
+    check: (): Promise<import('@shared/ipc-channels').UpdateStatusDto> =>
+      ipcRenderer.invoke(CHANNELS.UPDATE_CHECK, {}),
+    install: (): Promise<{ ok: boolean }> => ipcRenderer.invoke(CHANNELS.UPDATE_INSTALL, {}),
+    onStatus: (cb: (payload: import('@shared/ipc-channels').UpdateStatusDto) => void): (() => void) => {
+      const handler = (
+        _e: Electron.IpcRendererEvent,
+        payload: import('@shared/ipc-channels').UpdateStatusDto,
+      ): void => cb(payload);
+      ipcRenderer.on(CHANNELS.UPDATE_STATUS, handler);
+      return () => ipcRenderer.removeListener(CHANNELS.UPDATE_STATUS, handler);
+    },
+  },
   approvals: {
     /** Tool approvals from any run, including background ones no chat view watches. */
     onRequest: (cb: (payload: GlobalApprovalRequest) => void): (() => void) => {

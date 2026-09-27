@@ -39,23 +39,38 @@ npm run package
 ```
 
 Outputs in `dist/`:
-- `Flowstate-Setup-<version>.exe` — NSIS installer (creates Start Menu + Desktop shortcuts)
-- `Flowstate-Portable-<version>.exe` — single-file portable executable
+- `Flowstate-Setup-<version>.exe` — NSIS installer (creates Start Menu + Desktop shortcuts). Updates itself from GitHub Releases.
+- `Flowstate.exe` — single-file portable executable. Can't update itself; download the new version instead.
 
 Double-click either to launch. On first run, if any agent's model isn't installed locally, a model puller modal pops up with progress bars — click **Pull all** to fetch them. Skip is safe; you can pull from the modal later if it triggers again.
+
+## Release
+
+The installer build checks [GitHub Releases](https://github.com/justapileofashes/flowstate-agent-os/releases) on launch and every few hours, downloads a newer version in the background, and shows **"Flowstate X is ready — Restart"** (Settings → Updates shows the state and has **Check now**). It only sees *published* releases.
+
+1. Bump `version` in `package.json` (updates only go to higher versions) and commit.
+2. Build and upload to a draft release. The token needs permission to write releases on the repo (a fine-grained token with **Contents: read and write**):
+
+   ```bash
+   GH_TOKEN=<token> npm run package -- --publish always
+   ```
+
+   This uploads `Flowstate-Setup-<version>.exe`, its `.blockmap`, `latest.yml` and the portable `Flowstate.exe` to a draft release named after the version.
+3. On GitHub, add release notes and **Publish** the draft. Installed copies pick it up on their next check.
+
+Keep the repo public: the updater reads releases without a token.
 
 ## Test
 
 ```bash
 npm test
+npm run lint
+npm run typecheck
 ```
 
 ## Known Issues
 
-- **`better-sqlite3` ABI per runtime.** The native binary must match the runtime that loads it. Vitest runs under host Node, Electron uses its bundled Node — different ABIs. Same `build/Release/better_sqlite3.node` cannot satisfy both at once. The `package.json` scripts handle this via per-command rebuilds:
-  - `pretest` runs `npm rebuild better-sqlite3` (rebuilds for host Node ABI).
-  - `predev` / `prebuild` / `prestart` run `electron-rebuild -f -w better-sqlite3` (rebuilds for Electron's bundled Node ABI).
-  - Each switch takes a few seconds. If you forget and run `electron .` directly, the app will crash on DB open with a `NODE_MODULE_VERSION` mismatch — run `npm run rebuild:electron` and try again.
+- **`better-sqlite3` ABI per runtime.** The native binary must match the runtime that loads it: Vitest runs under host Node, Electron under its bundled Node. `scripts/sqlite-bindings.mjs` (run on `postinstall` and before dev/build/test) installs the prebuilt binary for each ABI side by side under `node_modules/better-sqlite3/lib/binding/`, so no rebuild is needed when switching. `electron-builder.yml` sets `npmRebuild: false` for the same reason: its rebuild would recreate `build/Release` with the Electron ABI, which shadows the Node binary and breaks tests. If you ever see a `NODE_MODULE_VERSION` mismatch, delete `node_modules/better-sqlite3/build` and run `npm run rebuild:node`.
 - **Visual Studio Build Tools.** If you're on Windows and `npm install` falls back to compiling `better-sqlite3` from source, you'll need Visual Studio 2022 Build Tools with the "Desktop development with C++" workload installed. Sticking with Node 22 (the pinned version) avoids this — Node 22 has prebuilt binaries.
 
 ## Status

@@ -41,8 +41,8 @@ electronFuses:
 win:
   icon: build/icon.ico
   target:
-    # Website distribution (self-hosted): one-click installer + portable single-file.
-    # These use the `generic` auto-update feed below.
+    # One-click installer (auto-updates from GitHub Releases, see `publish:`)
+    # + portable single-file (can't self-update; the app says so in Settings).
     - target: nsis
       arch:
         - x64
@@ -84,14 +84,16 @@ appx:
   publisherDisplayName: REPLACE_WITH_PUBLISHER_NAME   # e.g. Ashton Rey Kusuma
   applicationId: Flowstate
   backgroundColor: "#0e0d0c"
-# Auto-update feed for the WEBSITE build (nsis/portable). `generic` = any static
-# host you control: upload the installer + `latest.yml` + `.blockmap` to this URL
-# on each release. No GitHub needed. The in-app updater (auto-update.ts) reads
-# this; if the URL is unreachable it degrades silently. The Store (appx) build
-# updates via the Store and ignores this feed.
-# Release: bump `version` in package.json, then
-#   npm run build && npx electron-builder --publish always
-# (uploads to the host if you configure credentials, or build then upload by hand).
+# Auto-update feed: GitHub Releases of the (public) repo. electron-builder
+# writes `latest.yml` into the app and uploads the installer + `latest.yml` +
+# `.blockmap` to a release; the in-app updater (services/auto-update.ts) reads
+# the latest published release. The Store (appx) build ignores this.
+# Release (see README → Release): bump `version` in package.json, then with a
+# GitHub token that can write releases in GH_TOKEN:
+#   npm run package -- --publish always
+# electron-builder creates a draft release; publish it on GitHub to ship.
 publish:
-  - provider: generic
-    url: https://REPLACE_WITH_YOUR_DOMAIN/updates/
+  - provider: github
+    owner: justapileofashes
+    repo: flowstate-agent-os
+    releaseType: draft

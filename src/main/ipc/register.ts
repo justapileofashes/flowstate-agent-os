@@ -33,6 +33,7 @@ import { registerStocksHandlers } from './handlers/stocks';
 import { registerTraderHandlers } from './handlers/trader';
 import { registerPluginHandlers } from './handlers/plugins';
 import { registerTerminalHandlers } from './handlers/terminal';
+import { registerUpdateHandlers } from './handlers/updates';
 import type { McpManager } from '@main/services/mcp-manager';
 import type { PluginManager } from '@main/services/plugin-manager';
 import type { SecondBrain } from '@main/services/second-brain';
@@ -79,6 +80,7 @@ export function registerIpcHandlers(deps: {
     workspacesDir: deps.workspacesDir,
   });
   registerFileHandlers();
+  registerUpdateHandlers();
   registerModelsHandlers(deps.provider, deps.repo, deps.db, deps.settings);
   registerMcpHandlers({ manager: deps.mcpManager, settings: deps.settings });
   registerFlowclawHandlers({ settings: deps.settings });

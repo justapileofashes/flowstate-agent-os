@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type JSX } from 'react';
 import { ipc } from '../lib/ipc';
 import { ipcErrorMessage } from '../lib/ipc-error';
-import type { OllamaCloudStatusResponse } from '@shared/ipc-channels';
+import type { OllamaCloudStatusResponse, UpdateStatusDto } from '@shared/ipc-channels';
 import { ShortcutsList } from '../chat/ShortcutsModal';
 import { McpServersCard } from './McpServersCard';
 import { WebSearchCard } from './WebSearchCard';
@@ -51,6 +51,74 @@ function NotificationsSection(): JSX.Element {
             <span className="biz-switch-knob" />
           </button>
           <span className="muted text-sm">{enabled ? 'On' : 'Off'}</span>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function updateLine(s: UpdateStatusDto): string {
+  switch (s.state) {
+    case 'disabled':
+      return s.reason ?? 'Updates are off for this copy.';
+    case 'checking':
+      return 'Checking GitHub for a new version…';
+    case 'none':
+      return s.note ?? 'You have the latest version.';
+    case 'downloading':
+      return `Downloading ${s.version ?? 'update'}… ${s.percent ?? 0}%`;
+    case 'ready':
+      return `Version ${s.version} is ready — restart to install (or it installs when you quit).`;
+    case 'error':
+      return s.error ?? 'Update check failed.';
+    default:
+      return 'Checks for updates on launch and every few hours.';
+  }
+}
+
+function UpdatesSection(): JSX.Element {
+  const [status, setStatus] = useState<UpdateStatusDto | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    void ipc.updates.status().then(setStatus).catch(() => {});
+    return ipc.updates.onStatus(setStatus);
+  }, []);
+
+  async function check(): Promise<void> {
+    setBusy(true);
+    try {
+      setStatus(await ipc.updates.check());
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="settings-section">
+      <div className="head"><h3>Updates</h3></div>
+      <div className="settings-row">
+        <div className="lab">
+          Flowstate {status?.current ?? ''}
+          <span className="hint" style={status?.state === 'error' ? { color: 'var(--bad)' } : undefined}>
+            {status ? updateLine(status) : 'Loading…'}
+          </span>
+        </div>
+        <div className="row gap-2">
+          {status?.state === 'ready' ? (
+            <button type="button" className="btn btn-sm btn-primary" onClick={() => void ipc.updates.install()}>
+              Restart to update
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="btn btn-sm"
+              disabled={busy || !status || status.state === 'disabled' || status.state === 'checking' || status.state === 'downloading'}
+              onClick={() => void check()}
+            >
+              {busy ? 'Checking…' : 'Check now'}
+            </button>
+          )}
         </div>
       </div>
     </section>
@@ -392,6 +460,8 @@ export function Settings({ onOpenConnectors }: { onOpenConnectors?: () => void }
       </section>
 
       <NotificationsSection />
+
+      <UpdatesSection />
 
       <DevToolsSettings />
 

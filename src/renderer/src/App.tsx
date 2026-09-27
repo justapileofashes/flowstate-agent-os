@@ -28,6 +28,7 @@ import { useCustomizePrefs } from './lib/CustomizeContext';
 import { CustomizeDrawer } from './chat/CustomizeDrawer';
 import { OnboardingTour } from './chat/OnboardingTour';
 import { ClisOnboardingModal } from './chat/ClisOnboardingModal';
+import { UpdateToast } from './chat/UpdateToast';
 import { AnimatePresence, motion } from 'framer-motion';
 import { RoutingToast, type RoutingToastInfo } from './chat/RoutingToast';
 import { ModelPullerModal } from './chat/ModelPullerModal';
@@ -700,6 +701,7 @@ export function App(): JSX.Element {
       />
       <OnboardingTour />
       <ClisOnboardingModal />
+      <UpdateToast />
 
       <CustomizeDrawer open={customizeOpen} onClose={() => setCustomizeOpen(false)} />
     </div>

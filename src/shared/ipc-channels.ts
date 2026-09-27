@@ -48,6 +48,10 @@ export const CHANNELS = {
   MCP_TEST: 'mcp:test',
   MCP_REGISTRY_SEARCH: 'mcp:registry-search',
   MCP_STATUS: 'mcp:status',
+  UPDATE_STATUS: 'update:status',
+  UPDATE_GET_STATUS: 'update:get-status',
+  UPDATE_CHECK: 'update:check',
+  UPDATE_INSTALL: 'update:install',
   WEB_SEARCH_MCP_TOOLS: 'web-search:mcp-tools',
   WEB_SEARCH_TEST: 'web-search:test',
   FLOWCLAW_LIST: 'flowclaw:list',
@@ -1524,6 +1528,21 @@ export interface TerminalDataBroadcast {
 export interface TerminalExitBroadcast {
   id: string;
   code: number | null;
+}
+
+/** Auto-update state (GitHub Releases), pushed on `update:status`. */
+export interface UpdateStatusDto {
+  state: 'idle' | 'disabled' | 'checking' | 'none' | 'downloading' | 'ready' | 'error';
+  /** Running version. */
+  current: string;
+  /** Version being downloaded / ready to install. */
+  version?: string;
+  percent?: number;
+  /** Why updates are off (portable exe, Store, dev). */
+  reason?: string;
+  /** Extra context for `none`, e.g. no release published yet. */
+  note?: string;
+  error?: string;
 }
 
 /** A tool on a connected MCP server that Settings → Web search can use. */

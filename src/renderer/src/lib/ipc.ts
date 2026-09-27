@@ -195,6 +195,13 @@ interface FlowstateApi {
     setSkillSource: (id: string, enabled: boolean) => Promise<{ ok: boolean }>;
     subscribeStatus: (cb: (payload: PluginsStatusBroadcast) => void) => () => void;
   };
+  updates: {
+    status: () => Promise<import('@shared/ipc-channels').UpdateStatusDto>;
+    check: () => Promise<import('@shared/ipc-channels').UpdateStatusDto>;
+    /** Restart into a downloaded update. */
+    install: () => Promise<{ ok: boolean }>;
+    onStatus: (cb: (payload: import('@shared/ipc-channels').UpdateStatusDto) => void) => () => void;
+  };
   approvals: {
     onRequest: (
       cb: (payload: import('@shared/ipc-channels').GlobalApprovalRequest) => void,
