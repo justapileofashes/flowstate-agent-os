@@ -70,6 +70,66 @@ describe('ApprovalGate.shouldPrompt — yolo', () => {
   });
 });
 
+describe('ApprovalGate.shouldPrompt — run_code', () => {
+  it('always prompts for run_code (host JS exec, not a sandbox)', () => {
+    const gate = new ApprovalGate(() => {}, 1000);
+    expect(gate.shouldPrompt('cautious', 'run_code', { source: '1' }, false)).toBe(true);
+    expect(gate.shouldPrompt('trusting', 'run_code', { source: '1' }, false)).toBe(true);
+    expect(gate.shouldPrompt('yolo', 'run_code', { source: '1' }, false)).toBe(false);
+  });
+});
+
+describe('ApprovalGate.shouldPrompt — MCP tools', () => {
+  it('prompts for MCP tools (external actions) unless the agent is yolo', () => {
+    const gate = new ApprovalGate(() => {}, 1000);
+    expect(gate.shouldPrompt('cautious', 'mcp__srv__do', {}, false)).toBe(true);
+    expect(gate.shouldPrompt('trusting', 'mcp__srv__do', {}, false)).toBe(true);
+    expect(gate.shouldPrompt('yolo', 'mcp__srv__do', {}, false)).toBe(false);
+  });
+});
+
+describe('ApprovalGate.require — abort signal', () => {
+  const req = (signal: AbortSignal) => ({
+    streamId: 's1',
+    chatId: 'c1',
+    agent: fakeAgent,
+    toolCallId: 't1',
+    toolName: 'run_shell',
+    args: { command: 'ls' },
+    cwd: '/tmp/ws',
+    isOverwrite: false,
+    signal,
+  });
+
+  // Long auto-deny so only the abort (not the timeout) can settle these quickly.
+  const slowGate = () => {
+    const events: Array<{ channel: string; payload: unknown }> = [];
+    const gate = new ApprovalGate((channel, payload) => events.push({ channel, payload }), 60_000);
+    return { gate, events };
+  };
+  const within200ms = <T,>(p: Promise<T>) =>
+    Promise.race([p, new Promise<'still-pending'>((r) => setTimeout(() => r('still-pending'), 200))]);
+
+  it('denies at once, without prompting, when the run is already stopped', async () => {
+    const { gate, events } = slowGate();
+    const ac = new AbortController();
+    ac.abort();
+    expect(await within200ms(gate.require(req(ac.signal)))).toBe('deny');
+    expect(events.some((e) => e.channel === CHANNELS.APPROVAL_REQUEST)).toBe(false);
+  });
+
+  it('Stop while waiting denies the pending approval and a late Allow is a no-op', async () => {
+    const { gate, events } = slowGate();
+    const ac = new AbortController();
+    const p = gate.require(req(ac.signal));
+    await new Promise((r) => setTimeout(r, 5));
+    ac.abort();
+    expect(await within200ms(p)).toBe('deny');
+    expect(events.some((e) => e.channel === CHANNELS.APPROVAL_RESOLVED)).toBe(true);
+    expect(gate.resolve('s1', 't1', 'allow-once')).toBe(false);
+  });
+});
+
 describe('ApprovalGate.require — interactive', () => {
   it('emits tool-approval-required and resolves on allow-once', async () => {
     const { gate, events } = newGate();

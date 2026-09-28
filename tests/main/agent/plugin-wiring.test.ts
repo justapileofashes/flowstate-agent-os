@@ -22,6 +22,15 @@ describe('getToolSpecsForAgent skill tool', () => {
   });
 });
 
+describe('getToolSpecsForAgent run_code gating', () => {
+  it('offers run_code only when shell is enabled', () => {
+    const off = getToolSpecsForAgent({ shell_enabled: false, delete_enabled: true }, [], []);
+    expect(off.find((s) => s.name === 'run_code')).toBeUndefined();
+    const on = getToolSpecsForAgent({ shell_enabled: true, delete_enabled: true }, [], []);
+    expect(on.find((s) => s.name === 'run_code')).toBeDefined();
+  });
+});
+
 describe('buildSkillToolSpec', () => {
   it('requires a name parameter', () => {
     const spec = buildSkillToolSpec([{ name: 'x' }]);

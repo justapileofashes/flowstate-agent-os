@@ -90,7 +90,7 @@ describe('AgentSession — one tool call success', () => {
 });
 
 describe('AgentSession — abort', () => {
-  it('persists only user message and emits aborted end', async () => {
+  it('persists the partial reply and emits aborted end', async () => {
     class SlowProvider extends FakeProvider {
       async *chatStream(opts: {
         signal?: AbortSignal;
@@ -111,8 +111,10 @@ describe('AgentSession — abort', () => {
     manager.abort(streamId);
     await runPromise;
 
-    const roles = repo.getMessages(chatId).map((m) => m.role);
-    expect(roles).toEqual(['user']);
+    // What streamed before Stop is what the renderer re-reads from the DB.
+    const ms = repo.getMessages(chatId);
+    expect(ms.map((m) => m.role)).toEqual(['user', 'assistant']);
+    expect(ms[1]?.content).toMatch(/a[\s\S]*Stopped/);
 
     const endEvent = events.find((e) => e.channel === chatEventEndChannel(streamId));
     expect(endEvent).toBeDefined();
@@ -121,7 +123,7 @@ describe('AgentSession — abort', () => {
 });
 
 describe('AgentSession — error', () => {
-  it('persists only user message and emits error end', async () => {
+  it('persists the partial reply with a note and emits error end', async () => {
     class ThrowingProvider extends FakeProvider {
       async *chatStream(): AsyncGenerator<ProviderDelta> {
         yield { type: 'text', text: 'partial' };
@@ -133,11 +135,58 @@ describe('AgentSession — error', () => {
     const { streamId, session } = await manager.start(chatId);
     await session.run('hi');
 
-    const roles = repo.getMessages(chatId).map((m) => m.role);
-    expect(roles).toEqual(['user']);
+    const ms = repo.getMessages(chatId);
+    expect(ms.map((m) => m.role)).toEqual(['user', 'assistant']);
+    expect(ms[1]?.content).toMatch(/partial[\s\S]*interrupted/i);
 
     const endEvent = events.find((e) => e.channel === chatEventEndChannel(streamId));
     expect(endEvent?.payload).toMatchObject({ reason: 'error' });
+  });
+});
+
+describe('AgentSession — error after a tool ran', () => {
+  it('persists the assistant tool call and its result so history stays replayable', async () => {
+    class ToolThenThrowProvider extends FakeProvider {
+      private turns = 0;
+      async *chatStream(): AsyncGenerator<ProviderDelta> {
+        this.turns += 1;
+        if (this.turns === 1) {
+          yield { type: 'tool-call', name: 'read_file', args: { path: 'a.txt' }, id: 'c1' };
+          yield { type: 'done' };
+          return;
+        }
+        throw new Error('connection reset');
+      }
+    }
+    const manager = buildManager(new ToolThenThrowProvider([]));
+    const { session } = await manager.start(chatId);
+    await session.run('read it');
+
+    const ms = repo.getMessages(chatId);
+    expect(ms.map((m) => m.role)).toEqual(['user', 'assistant', 'tool']);
+    // A tool_use with no matching tool_result is invalid history for the API.
+    expect(ms[2]?.toolCallId).toBe('c1');
+    expect(ms[1]?.toolCalls?.[0]?.id).toBe('c1');
+  });
+});
+
+describe('AgentSession — abort with nothing streamed', () => {
+  it('persists only the user message', async () => {
+    class SilentProvider extends FakeProvider {
+      async *chatStream(opts: { signal?: AbortSignal }): AsyncGenerator<ProviderDelta> {
+        await new Promise<void>((_resolve, reject) => {
+          opts.signal?.addEventListener('abort', () => reject(new Error('AbortError')));
+        });
+      }
+    }
+    const manager = buildManager(new SilentProvider([]));
+    const { streamId, session } = await manager.start(chatId);
+    const runPromise = session.run('never mind');
+    await new Promise((r) => setTimeout(r, 20));
+    manager.abort(streamId);
+    await runPromise;
+
+    expect(repo.getMessages(chatId).map((m) => m.role)).toEqual(['user']);
   });
 });
 

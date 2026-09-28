@@ -82,6 +82,33 @@ describe('AgentRuntime — one tool call success', () => {
   });
 });
 
+describe('AgentRuntime — abort signal reaches tool dispatch', () => {
+  it('passes the turn signal to dispatcher.call so Stop can block a pending approval', async () => {
+    let seen: AbortSignal | undefined;
+    const spy = {
+      call: async (id: string, name: string, _args: unknown, signal?: AbortSignal) => {
+        seen = signal;
+        return { toolCallId: id, toolName: name, ok: true, content: 'x' };
+      },
+    } as unknown as ToolDispatcher;
+    const rt = new AgentRuntime({
+      provider: new FakeProvider([
+        { type: 'tool-call', name: 'read_file', args: { path: 'a.txt' }, id: 'c1' },
+        { type: 'done' },
+        { type: 'text', text: 'ok' },
+        { type: 'done' },
+      ]),
+      model: 'fake',
+      systemPrompt: 'test',
+      tools: FILE_TOOL_SPECS,
+      dispatcher: spy,
+    });
+    const ac = new AbortController();
+    await collect(rt.send('go', ac.signal));
+    expect(seen).toBe(ac.signal);
+  });
+});
+
 describe('AgentRuntime — malformed tool args, model recovers', () => {
   it('feeds failure back, model retries, succeeds', async () => {
     const rt = build([

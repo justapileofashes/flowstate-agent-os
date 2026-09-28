@@ -23,7 +23,9 @@ describe('inline images', () => {
     for await (const _ of p.chatStream({ model: 'llava:7b', messages: [{ role: 'user', content: MSG }], tools: [] })) {
       // drain
     }
-    const body = JSON.parse(String(fetchMock.mock.calls[0]![1]!.body)) as {
+    // A turn with images probes /api/show first, so /api/chat is not call 0.
+    const chatCall = fetchMock.mock.calls.find((c) => String(c[0]).endsWith('/api/chat'));
+    const body = JSON.parse(String(chatCall![1]!.body)) as {
       messages: Array<{ content: string; images?: string[] }>;
     };
     expect(body.messages[0]).toMatchObject({ content: 'what is this?\n\n[image attached]', images: ['iVBORw0KGgo='] });

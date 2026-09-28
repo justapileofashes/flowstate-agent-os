@@ -85,7 +85,7 @@ export const SHELL_TOOL_SPEC: ToolSpec = {
 export const CODE_INTERPRETER_TOOL_SPEC: ToolSpec = {
   name: 'run_code',
   description:
-    'Execute JavaScript in a sandboxed VM context (no fs, no network, no process). Captures console.log + return value. 5 second timeout. Use for math, data transformations, parsing, quick computation. Return statements in top-level work via implicit async wrapper.',
+    'Run JavaScript on the host via node:vm. This is NOT a security sandbox — code has full Node.js access and requires approval. Captures console.log + return value. 5 second timeout. Use for math, data transformations, parsing, quick computation. Return statements at top level work via implicit async wrapper.',
   parameters: {
     type: 'object',
     properties: {
@@ -392,7 +392,9 @@ export function getToolSpecsForAgent(
   for (const spec of BRAIN_TOOL_SPECS) result.push(spec);
   for (const spec of DESIGN_TOOL_SPECS) result.push(spec);
   result.push(MODEL_3D_TOOL_SPEC);
-  result.push(CODE_INTERPRETER_TOOL_SPEC);
+  // run_code runs JS on the host via node:vm (NOT a sandbox). Treat it as
+  // shell-equivalent: same perm gate + approval prompt (see approval-gate).
+  if (perms.shell_enabled) result.push(CODE_INTERPRETER_TOOL_SPEC);
   result.push(WEB_SEARCH_TOOL_SPEC);
   result.push(STOCK_DATA_TOOL_SPEC);
   result.push(STOCK_CHART_TOOL_SPEC);

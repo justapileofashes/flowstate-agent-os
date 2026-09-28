@@ -201,7 +201,50 @@ export class AgentSession {
         }
       }
 
-      if (lastReason === 'end' || lastReason === 'max-tools') {
+      // An interrupted turn still keeps what actually happened: the renderer
+      // re-reads the chat from the DB once the stream ends, so anything left
+      // unpersisted disappears from a turn the user watched.
+      const interrupted = lastReason === 'error' || lastReason === 'aborted';
+      if (interrupted) {
+        closeAssistant();
+        // An assistant with neither text nor tool calls is noise.
+        for (let i = persisted.length - 1; i >= 0; i--) {
+          const p = persisted[i]!;
+          if (p.kind === 'assistant' && p.content.trim() === '' && p.toolCalls.length === 0) {
+            persisted.splice(i, 1);
+          }
+        }
+        // A tool_use with no tool_result is invalid history for API providers.
+        const answered = new Set(
+          persisted.filter((p): p is PendingTool => p.kind === 'tool').map((p) => p.toolCallId),
+        );
+        for (const p of persisted) {
+          if (p.kind !== 'assistant') continue;
+          for (const c of p.toolCalls) {
+            if (answered.has(c.id)) continue;
+            persisted.push({
+              kind: 'tool',
+              content: 'Cancelled — the turn stopped before this tool ran.',
+              toolCallId: c.id,
+              toolName: c.name,
+            });
+            answered.add(c.id);
+          }
+        }
+        const note =
+          lastReason === 'aborted'
+            ? '\n\n_(Stopped)_'
+            : `\n\n_(Reply interrupted: ${lastError ?? 'error'})_`;
+        const lastAssistant = [...persisted]
+          .reverse()
+          .find((p): p is PendingAssistant => p.kind === 'assistant');
+        if (lastAssistant) lastAssistant.content += note;
+        else if (lastReason === 'error') {
+          persisted.push({ kind: 'assistant', content: note.trim(), toolCalls: [] });
+        }
+      }
+
+      if (lastReason === 'end' || lastReason === 'max-tools' || (interrupted && persisted.length > 0)) {
         for (const p of persisted) {
           if (p.kind === 'assistant') {
             this.repo.appendMessage(this.chat.id, {

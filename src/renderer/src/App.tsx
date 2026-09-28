@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ipc } from './lib/ipc';
 import type { AgentDto } from '@shared/chat-types';
 import type {
@@ -7,7 +7,7 @@ import type {
   GlobalApprovalRequest,
 } from '@shared/ipc-channels';
 import { ApprovalModal } from './chat/ApprovalModal';
-import { localStreamIds } from './lib/local-streams';
+import { markApprovalResolved, shouldShowBackgroundApproval } from './lib/local-streams';
 import { Settings } from './screens/Settings';
 import { Chat } from './screens/Chat';
 import { Dashboard } from './screens/Dashboard';
@@ -24,7 +24,7 @@ import brainIcon from './assets/brain-icon.png';
 import flowclawIconV3 from './assets/flowclaw-icon-v3.png';
 import { MascotLayer } from './chat/Mascot';
 import { useAgentLiveStatus } from './chat/useAgentLiveStatus';
-import { useCustomizePrefs } from './lib/CustomizeContext';
+import { useCustomize, useCustomizePrefs } from './lib/CustomizeContext';
 import { CustomizeDrawer } from './chat/CustomizeDrawer';
 import { OnboardingTour } from './chat/OnboardingTour';
 import { ClisOnboardingModal } from './chat/ClisOnboardingModal';
@@ -89,6 +89,21 @@ export function App(): JSX.Element {
   const liveAgentIds = Array.from(liveStatus.keys());
   const [customizeOpen, setCustomizeOpen] = useState(false);
   const prefs = useCustomizePrefs();
+  const { cancel: cancelCustomizeDraft } = useCustomize();
+
+  // Navigating must not leave the Customize overlay covering the new screen:
+  // the sidebar and title switch, the drawer stays up, and the app looks stuck.
+  // Same path as Escape — drop the unsaved draft, then close. The ref keeps
+  // this to real view changes, so opening the drawer doesn't close it again.
+  const lastView = useRef(view);
+  useEffect(() => {
+    if (lastView.current === view) return;
+    lastView.current = view;
+    if (customizeOpen) {
+      cancelCustomizeDraft();
+      setCustomizeOpen(false);
+    }
+  }, [view, customizeOpen, cancelCustomizeDraft]);
 
   const refreshRecentChats = useCallback(async () => {
     try {
@@ -256,15 +271,16 @@ export function App(): JSX.Element {
     const offReq = ipc.approvals.onRequest((p) => {
       // A chat view claims its stream right after send(); give it a beat.
       setTimeout(() => {
-        if (localStreamIds.has(p.streamId)) return;
+        if (!shouldShowBackgroundApproval(p.streamId, p.toolCallId)) return;
         setBgApprovals((q) =>
           q.some((x) => x.streamId === p.streamId && x.toolCallId === p.toolCallId) ? q : [...q, p],
         );
       }, 150);
     });
-    const offRes = ipc.approvals.onResolved((p) =>
-      setBgApprovals((q) => q.filter((x) => !(x.streamId === p.streamId && x.toolCallId === p.toolCallId))),
-    );
+    const offRes = ipc.approvals.onResolved((p) => {
+      markApprovalResolved(p.streamId, p.toolCallId);
+      setBgApprovals((q) => q.filter((x) => !(x.streamId === p.streamId && x.toolCallId === p.toolCallId)));
+    });
     return () => {
       offReq();
       offRes();

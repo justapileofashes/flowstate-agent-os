@@ -153,7 +153,7 @@ export class AgentRuntime {
           emitted = true;
           yield { type: 'tool-call', call };
 
-          const result = await this.dispatcher.call(call.id, call.name, call.args);
+          const result = await this.dispatcher.call(call.id, call.name, call.args, signal);
           yield { type: 'tool-result', result };
           this.history.push({
             role: 'tool',

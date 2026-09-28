@@ -78,6 +78,36 @@ export class OllamaProvider implements LLMProvider {
     private readonly maxCtx: () => number = () => DEFAULT_MAX_CTX,
   ) {}
 
+  private readonly visionCache = new Map<string, boolean>();
+
+  /** Text-only models error (or hallucinate) on an `images` array they can't
+   *  read, and history keeps resending them. Probe once per model. */
+  private async supportsVision(model: string): Promise<boolean> {
+    const hit = this.visionCache.get(model);
+    if (hit !== undefined) return hit;
+    try {
+      const res = await this.fetchFn(`${this.host}/api/show`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model }),
+      });
+      // ponytail: an unreachable or old Ollama answers "vision" so nothing
+      // regresses; the cache keeps that guess for the session.
+      if (!res.ok) {
+        this.visionCache.set(model, true);
+        return true;
+      }
+      const data = (await res.json()) as { capabilities?: string[] };
+      const vision = Array.isArray(data.capabilities)
+        ? data.capabilities.includes('vision')
+        : true;
+      this.visionCache.set(model, vision);
+      return vision;
+    } catch {
+      return true;
+    }
+  }
+
   private numCtx(model: string, payload: unknown): number {
     return pickNumCtx(model, estimateTokens(JSON.stringify(payload)), this.maxCtx());
   }
@@ -86,12 +116,16 @@ export class OllamaProvider implements LLMProvider {
     // Pasted images arrive as markdown data URLs in the text; vision models
     // need them as base64 `images` instead.
     const split = opts.messages.map((m) => extractInlineImages(m.content));
+    // Only pay for the capability probe when there is an image to send.
+    const vision = split.some((s) => s.images.length > 0)
+      ? await this.supportsVision(opts.model)
+      : true;
     const body: Record<string, unknown> = {
       model: opts.model,
       messages: opts.messages.map((m, i) => ({
         role: m.role,
         content: split[i]!.text,
-        ...(split[i]!.images.length > 0 ? { images: split[i]!.images } : {}),
+        ...(vision && split[i]!.images.length > 0 ? { images: split[i]!.images } : {}),
         ...(m.toolCalls
           ? {
               tool_calls: m.toolCalls.map((c) => ({

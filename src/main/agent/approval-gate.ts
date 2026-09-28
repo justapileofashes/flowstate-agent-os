@@ -20,6 +20,8 @@ export interface ApprovalRequireOpts {
   isOverwrite: boolean;
   /** Per-agent constitution rules, evaluated before the built-in policy. */
   constitution?: ConstitutionRule[];
+  /** The run's abort signal: Stop denies a pending approval. */
+  signal?: AbortSignal;
 }
 
 type Decision = 'allow-once' | 'allow-rest' | 'deny';
@@ -51,6 +53,9 @@ export class ApprovalGate {
   ): boolean {
     if (policy === 'yolo') return false;
     if (toolName === 'run_shell') return true;
+    if (toolName === 'run_code') return true;
+    // MCP tools are arbitrary external actions (send, delete, pay…).
+    if (toolName.startsWith('mcp__')) return true;
     if (toolName === 'delete_file') return true;
     if (toolName === 'write_file') {
       if (policy === 'cautious') return isOverwrite;
@@ -60,6 +65,7 @@ export class ApprovalGate {
   }
 
   async require(opts: ApprovalRequireOpts): Promise<'allow' | 'deny'> {
+    if (opts.signal?.aborted) return 'deny';
     // Constitution rules win over the built-in policy.
     const verdict =
       opts.constitution && opts.constitution.length
@@ -104,6 +110,12 @@ export class ApprovalGate {
         agentId: opts.agent.id,
         streamId: opts.streamId,
       });
+      // Stop denies whatever is still waiting; resolve() is a no-op once settled.
+      opts.signal?.addEventListener(
+        'abort',
+        () => this.resolve(opts.streamId, opts.toolCallId, 'deny'),
+        { once: true },
+      );
       this.send(chatEventChannel(opts.streamId), {
         type: 'tool-approval-required',
         toolCallId: opts.toolCallId,

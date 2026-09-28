@@ -24,6 +24,96 @@ const baseOpts = {
   tools: [],
 };
 
+describe('OllamaProvider.chatStream — image history vs. model capabilities', () => {
+  const imageOpts = {
+    model: 'llama3.1:8b',
+    messages: [
+      { role: 'user' as const, content: 'look ![shot](data:image/png;base64,QUJD)' },
+    ],
+    tools: [],
+  };
+
+  /** Routes /api/show to `capabilities`, /api/chat to a one-line done stream. */
+  function router(show: () => Response) {
+    const bodies: Array<Record<string, unknown>> = [];
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith('/api/show')) return show();
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return new Response(
+        ndjsonStream([JSON.stringify({ message: { content: 'ok' }, done: true })]),
+        { status: 200 },
+      );
+    });
+    return { fetchMock, bodies };
+  }
+
+  const caps = (capabilities: string[]) =>
+    new Response(JSON.stringify({ capabilities }), { status: 200 });
+  const firstMessage = (bodies: Array<Record<string, unknown>>) =>
+    (bodies[0]!['messages'] as Array<Record<string, unknown>>)[0]!;
+
+  it('drops images for a text-only model but keeps the marker', async () => {
+    const { fetchMock, bodies } = router(() => caps(['completion']));
+    const p = new OllamaProvider('http://localhost:11434', fetchMock);
+    await collect(p.chatStream(imageOpts));
+    const msg = firstMessage(bodies);
+    expect(msg['images']).toBeUndefined();
+    expect(msg['content']).toContain('[image attached]');
+  });
+
+  it('keeps images for a vision model', async () => {
+    const { fetchMock, bodies } = router(() => caps(['completion', 'vision']));
+    const p = new OllamaProvider('http://localhost:11434', fetchMock);
+    await collect(p.chatStream({ ...imageOpts, model: 'llava:7b' }));
+    expect(firstMessage(bodies)['images']).toEqual(['QUJD']);
+  });
+
+  it('keeps images when /api/show fails — an unknown model is not downgraded', async () => {
+    const { fetchMock, bodies } = router(() => new Response('nope', { status: 404 }));
+    const p = new OllamaProvider('http://localhost:11434', fetchMock);
+    await collect(p.chatStream(imageOpts));
+    expect(firstMessage(bodies)['images']).toEqual(['QUJD']);
+  });
+
+  it('keeps images when /api/show throws', async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith('/api/show')) throw new Error('ECONNREFUSED');
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return new Response(
+        ndjsonStream([JSON.stringify({ message: { content: 'ok' }, done: true })]),
+        { status: 200 },
+      );
+    });
+    const p = new OllamaProvider('http://localhost:11434', fetchMock);
+    await collect(p.chatStream(imageOpts));
+    expect(firstMessage(bodies)['images']).toEqual(['QUJD']);
+  });
+
+  it('probes /api/show once per model', async () => {
+    let probes = 0;
+    const { fetchMock } = router(() => {
+      probes += 1;
+      return caps(['completion']);
+    });
+    const p = new OllamaProvider('http://localhost:11434', fetchMock);
+    await collect(p.chatStream(imageOpts));
+    await collect(p.chatStream(imageOpts));
+    expect(probes).toBe(1);
+  });
+
+  it('does not probe at all when the turn has no images', async () => {
+    let probes = 0;
+    const { fetchMock } = router(() => {
+      probes += 1;
+      return caps(['completion']);
+    });
+    const p = new OllamaProvider('http://localhost:11434', fetchMock);
+    await collect(p.chatStream(baseOpts));
+    expect(probes).toBe(0);
+  });
+});
+
 describe('OllamaProvider.chatStream', () => {
   it('parses text deltas across chunks and emits done', async () => {
     const fetchMock = vi.fn(async () =>

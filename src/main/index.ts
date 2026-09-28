@@ -486,9 +486,27 @@ app.whenReady().then(async () => {
   }
   const orchestrator = new Orchestrator(provider, orchestratorModel ?? 'qwen2.5:7b');
 
+  // Read per call: the user can change the model (or install one) while the
+  // app is open, and the startup pick above may be stale or uninstalled.
+  const resolveOrchestratorModel = async (): Promise<string> => {
+    const chosen = settings.get('orchestrator_model');
+    if (chosen) return chosen;
+    try {
+      const installed = await provider.listModels();
+      const pick =
+        ORCHESTRATOR_PREFIXES.map((p) => installed.find((m) => m.name.startsWith(p))).find(
+          Boolean,
+        ) ?? installed[0];
+      if (pick) return pick.name;
+    } catch {
+      // Ollama not reachable — fall through to the default below.
+    }
+    return 'qwen2.5:7b';
+  };
+
   const coordinator = new Coordinator({
     provider,
-    plannerModel: orchestratorModel ?? 'qwen2.5:7b',
+    plannerModel: resolveOrchestratorModel,
     repo,
     approvalGate,
     mcpManager,
@@ -497,10 +515,7 @@ app.whenReady().then(async () => {
     snapshots,
   });
 
-  const agentGenerator = new AgentGenerator(
-    provider,
-    orchestratorModel ?? 'qwen2.5:7b',
-  );
+  const agentGenerator = new AgentGenerator(provider, resolveOrchestratorModel);
 
   registerIpcHandlers({
     settings,

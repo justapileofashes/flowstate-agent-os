@@ -1,9 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FileTools } from '@main/tools';
 import { ToolDispatcher, MAX_TOOL_OUTPUT_BYTES } from '@main/agent/tool-dispatcher';
+import type { AgentRow, ChatRow } from '@main/repos/chat-repository';
+import type { ApprovalGate } from '@main/agent/approval-gate';
+import type { McpManager } from '@main/services/mcp-manager';
 
 let workspace: string;
 let tools: FileTools;
@@ -102,6 +105,131 @@ describe('ToolDispatcher.call — failures (returned, not thrown)', () => {
   it('sandbox violation returned as ok=false', async () => {
     const r = await dispatcher.call('x', 'read_file', { path: '../escape' });
     expect(r.ok).toBe(false);
+  });
+});
+
+describe('ToolDispatcher.call — tool perms', () => {
+  // A model can emit any tool name (hallucination / prompt injection), and team
+  // runs dispatch as 'yolo' — so hiding a spec is not enough; the dispatcher
+  // itself must refuse tools the agent's perms disable.
+  function withPerms(shell: boolean, del: boolean): ToolDispatcher {
+    const agent = {
+      id: 'agent-x',
+      name: 'X',
+      approvalPolicy: 'yolo',
+      toolPerms: { shell_enabled: shell, delete_enabled: del },
+    } as unknown as AgentRow;
+    return new ToolDispatcher({ fileTools: tools, workspaceRoot: workspace, agent });
+  }
+
+  it('refuses run_shell and run_code when shell is disabled', async () => {
+    const d = withPerms(false, true);
+    const sh = await d.call('x', 'run_shell', { command: 'echo hi' });
+    expect(sh.ok).toBe(false);
+    expect(sh.content).toMatch(/disabled for this agent/);
+    const code = await d.call('y', 'run_code', { language: 'javascript', source: 'return 1 + 1' });
+    expect(code.ok).toBe(false);
+    expect(code.content).toMatch(/disabled for this agent/);
+  });
+
+  it('refuses delete_file when delete is disabled', async () => {
+    const r = await withPerms(true, false).call('x', 'delete_file', { path: 'a.txt' });
+    expect(r.ok).toBe(false);
+    expect(r.content).toMatch(/disabled for this agent/);
+    expect(existsSync(join(workspace, 'a.txt'))).toBe(true);
+  });
+
+  it('still runs run_code when shell is enabled', async () => {
+    const r = await withPerms(true, true).call('x', 'run_code', { language: 'javascript', source: 'return 1 + 1' });
+    expect(r.ok).toBe(true);
+    expect(JSON.parse(r.content)).toMatchObject({ ok: true, result: 2 });
+  });
+});
+
+describe('ToolDispatcher.call — Stop during approval', () => {
+  it('does not run the tool when the run was stopped while approval was pending', async () => {
+    const ac = new AbortController();
+    // Stand-in gate: the user clicks Stop, then Allow on the still-open card.
+    const approvalGate = {
+      require: async () => {
+        ac.abort();
+        return 'allow' as const;
+      },
+    } as unknown as ApprovalGate;
+    const agent = {
+      id: 'agent-x',
+      name: 'X',
+      approvalPolicy: 'cautious',
+      toolPerms: { shell_enabled: true, delete_enabled: true },
+    } as unknown as AgentRow;
+    const d = new ToolDispatcher({
+      fileTools: tools,
+      workspaceRoot: workspace,
+      approvalGate,
+      agent,
+      chat: { id: 'chat-x' } as unknown as ChatRow,
+      streamId: 'stream-x',
+    });
+    const r = await d.call('x', 'write_file', { path: 'stopped.txt', content: 'nope' }, ac.signal);
+    expect(r.ok).toBe(false);
+    expect(r.content).toMatch(/Stopped by the user/);
+    expect(existsSync(join(workspace, 'stopped.txt'))).toBe(false);
+  });
+});
+
+describe('ToolDispatcher.call — Stop during the safety snapshot', () => {
+  it('does not run the tool when the run was stopped while the snapshot was being written', async () => {
+    // The snapshot is awaited after approval returns. An abort landing in that
+    // window must still stop the tool, not only one taken during the wait.
+    const root = mkdtempSync(join(tmpdir(), 'fs-snap-'));
+    writeFileSync(join(root, 'doomed.txt'), 'keep me');
+    const ac = new AbortController();
+    const dispatcher = new ToolDispatcher({
+      fileTools: new FileTools(root),
+      workspaceRoot: root,
+      snapshots: { create: async () => { ac.abort(); } },
+      agent: { id: 'a1', toolPerms: { shell_enabled: false, delete_enabled: true } } as AgentRow,
+      chat: { id: 'chat-x' } as ChatRow,
+      streamId: 'stream-x',
+      approvalGate: { require: async () => 'allow' as const } as unknown as ApprovalGate,
+    } as unknown as ConstructorParameters<typeof ToolDispatcher>[0]);
+    const r = await dispatcher.call('x', 'delete_file', { path: 'doomed.txt' }, ac.signal);
+    expect(r.ok).toBe(false);
+    expect(r.content).toMatch(/Stopped by the user/);
+    expect(existsSync(join(root, 'doomed.txt'))).toBe(true);
+    rmSync(root, { recursive: true, force: true });
+  });
+});
+
+describe('ToolDispatcher.call — MCP tools go through the approval gate', () => {
+  it('does not call the MCP server when the gate denies', async () => {
+    let calls = 0;
+    const mcpManager = {
+      callTool: async () => {
+        calls += 1;
+        return { isError: false, content: 'done' };
+      },
+    } as unknown as McpManager;
+    const approvalGate = { require: async () => 'deny' as const } as unknown as ApprovalGate;
+    const agent = {
+      id: 'agent-x',
+      name: 'X',
+      approvalPolicy: 'cautious',
+      toolPerms: { shell_enabled: false, delete_enabled: false },
+    } as unknown as AgentRow;
+    const d = new ToolDispatcher({
+      fileTools: tools,
+      workspaceRoot: workspace,
+      approvalGate,
+      agent,
+      chat: { id: 'chat-x' } as unknown as ChatRow,
+      streamId: 'stream-x',
+      mcpManager,
+    });
+    const r = await d.call('x', 'mcp__srv__send_email', { to: 'a@b.c' });
+    expect(r.ok).toBe(false);
+    expect(r.content).toMatch(/Denied/);
+    expect(calls).toBe(0);
   });
 });
 

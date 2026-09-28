@@ -96,7 +96,8 @@ Rules:
 export class AgentGenerator {
   constructor(
     private readonly provider: LLMProvider,
-    private readonly model: string,
+    /** Resolved per call — the orchestrator model is a live setting. */
+    private readonly resolveModel: () => Promise<string>,
   ) {}
 
   async generate(input: GenerateAgentInput): Promise<GeneratedAgentSpec> {
@@ -111,11 +112,12 @@ export class AgentGenerator {
     }
 
     const prompt = buildPrompt(input, models);
+    const plannerModel = await this.resolveModel();
 
     let response: { text: string };
     try {
       response = await this.provider.chatOnce({
-        model: this.model,
+        model: plannerModel,
         format: 'json',
         messages: [
           {
@@ -134,7 +136,13 @@ export class AgentGenerator {
 
     let parsed: unknown;
     try {
-      parsed = JSON.parse(response.text.trim());
+      let text = response.text.trim();
+      // API providers wrap the object in a ```json fence despite the "no prose"
+      // instruction. ponytail: strips the fence only — switch to a brace scan
+      // if models start adding prose around it.
+      const fence = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (fence) text = fence[1]!.trim();
+      parsed = JSON.parse(text);
     } catch {
       throw new Error('Agent generator returned invalid JSON. Try again.');
     }

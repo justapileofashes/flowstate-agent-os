@@ -235,7 +235,7 @@ export function Settings({ onOpenConnectors }: { onOpenConnectors?: () => void }
   }
 
   async function saveOrchestratorModel(): Promise<void> {
-    if (!state.orchestratorModel) return;
+    // '' is a real choice: it means auto-pick an installed model per run.
     await ipc.settings.set('orchestrator_model', state.orchestratorModel);
     setState((s) => ({ ...s, saveStatus: 'Saved.' }));
     setTimeout(() => setState((s) => ({ ...s, saveStatus: null })), 3000);
@@ -287,7 +287,7 @@ export function Settings({ onOpenConnectors }: { onOpenConnectors?: () => void }
         <div className="settings-row">
           <div className="lab">
             Orchestrator model
-            <span className="hint">Picks an agent when you use the global "Ask anything" box</span>
+            <span className="hint">Plans team runs and writes new agents. Auto picks an installed model.</span>
           </div>
           <div className="row gap-2">
             <select
@@ -306,7 +306,6 @@ export function Settings({ onOpenConnectors }: { onOpenConnectors?: () => void }
               type="button"
               className="btn btn-sm btn-primary"
               onClick={() => void saveOrchestratorModel()}
-              disabled={state.orchestratorModel === ''}
             >
               Save
             </button>

@@ -12,6 +12,7 @@ import { randomUUID } from 'node:crypto';
 import type { LLMProvider } from './llm-provider';
 import { AgentRuntime } from './agent-runtime';
 import { describeModelError } from './model-errors';
+import { substituteModel } from './model-fallback';
 import { ToolDispatcher } from './tool-dispatcher';
 import { loadConstitution } from './constitution';
 import { FileTools } from '@main/tools';
@@ -126,7 +127,9 @@ function truncate(s: string, n: number): string {
 
 export interface CoordinatorOpts {
   provider: LLMProvider;
-  plannerModel: string;
+  /** Resolved per run: the orchestrator model is a setting the user can
+   *  change while the app is open. */
+  plannerModel: () => Promise<string>;
   repo: ChatRepository;
   approvalGate: ApprovalGate;
   mcpManager?: McpManager;
@@ -227,20 +230,37 @@ export class Coordinator {
     return true;
   }
 
+  /**
+   * Rewrite each agent's model to one Ollama actually has. A team run builds
+   * single-model runtimes with no failover chain, so a seeded agent asking for
+   * a model nobody pulled kills the subtask and then the synthesis. Done once
+   * per run, before planning, so the planner also sees the real models.
+   */
+  private async withInstalledModels(agents: AgentRow[]): Promise<AgentRow[]> {
+    let installed: string[] = [];
+    try {
+      installed = (await this.opts.provider.listModels()).map((m) => m.name);
+    } catch {
+      // Ollama unreachable — substituteModel leaves the names alone.
+    }
+    return agents.map((a) => ({ ...a, model: substituteModel(a.model, installed) }));
+  }
+
   private async execute(runId: string, userText: string, state: RunState): Promise<void> {
     const { signal, emit } = state;
     try {
-      const agents = this.opts.repo.listAgents();
+      const agents = await this.withInstalledModels(this.opts.repo.listAgents());
       if (agents.length === 0) {
         emit({ type: 'run-end', reason: 'error', error: 'No agents available.' });
         return;
       }
 
       // 1. PLAN
+      const plannerModel = await this.opts.plannerModel();
       let planRaw: { text: string };
       try {
         planRaw = await this.opts.provider.chatOnce({
-          model: this.opts.plannerModel,
+          model: plannerModel,
           format: 'json',
           messages: [
             { role: 'system', content: buildPlannerPrompt(agents) },
@@ -251,7 +271,7 @@ export class Coordinator {
         emit({
           type: 'run-end',
           reason: 'error',
-          error: `Planner failed: ${describeModelError(err instanceof Error ? err.message : String(err), this.opts.plannerModel)}`,
+          error: `Planner failed: ${describeModelError(err instanceof Error ? err.message : String(err), plannerModel)}`,
         });
         return;
       }
