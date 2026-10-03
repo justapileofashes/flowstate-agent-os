@@ -15,6 +15,10 @@ files:
   # Loaded at runtime from app.asar.unpacked (src/main/ipc/handlers/terminal.ts).
   - "node_modules/@lydell/**"
   - "!node_modules/@lydell/**/*.pdb"
+# Window + tray icon (main/index.ts resolveIcon looks in resources/build/).
+extraResources:
+  - from: build/icon.png
+    to: build/icon.png
 asar: true
 asarUnpack:
   - "node_modules/better-sqlite3/**"

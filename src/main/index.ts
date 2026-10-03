@@ -48,6 +48,14 @@ import {
   fetchInstalledModelNames,
 } from './services/agent-model-matcher';
 import { SEED_AGENTS } from './seed-agents';
+import {
+  HIDDEN_FLAG,
+  getOpenAtLogin,
+  hideOnClose,
+  setOpenAtLogin,
+  setupBackground,
+  showWindow,
+} from './background';
 import { SEED_LEDGER_KEY, cleanupCandidates, createFromTemplate, parseLedger, planSeeding } from './agent-library';
 import { registerIpcHandlers } from './ipc/register';
 import { getConnectedClis } from './ipc/handlers/clis';
@@ -112,7 +120,10 @@ function createWindow(opts: { popoutChatId?: string; popoutAgentId?: string } = 
     },
   });
 
-  win.on('ready-to-show', () => win.show());
+  // A login launch (--hidden) starts in the tray.
+  win.on('ready-to-show', () => {
+    if (!startHidden || isPopout) win.show();
+  });
   win.on('maximize', () => win.webContents.send('window:maximized-changed', true));
   win.on('unmaximize', () => win.webContents.send('window:maximized-changed', false));
 
@@ -203,6 +214,16 @@ function showFatalDialog(title: string, message: string): void {
 }
 
 registerPreviewScheme();
+
+// One running copy per profile: a second launch focuses the first (handled in
+// setupBackground). The lock is per user-data dir, so isolated test profiles
+// (--user-data-dir) still run side by side.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+  process.exit(0);
+}
+const startHidden = process.argv.includes(HIDDEN_FLAG);
+let mainWindow: BrowserWindow | null = null;
 
 app.whenReady().then(async () => {
   installContentSecurityPolicy();
@@ -381,12 +402,8 @@ app.whenReady().then(async () => {
     const content = decideNotification(payload);
     if (!content || !Notification.isSupported()) return;
     const notif = new Notification({ title: content.title, body: content.body });
-    notif.on('click', () => {
-      const w = BrowserWindow.getAllWindows()[0];
-      if (!w) return;
-      if (w.isMinimized()) w.restore();
-      w.focus();
-    });
+    // The main window may be hidden in the tray — bring it back.
+    notif.on('click', () => showWindow(mainWindow ?? BrowserWindow.getAllWindows()[0]));
     notif.show();
   };
 
@@ -567,6 +584,12 @@ app.whenReady().then(async () => {
     return BrowserWindow.fromWebContents(e.sender)?.isMaximized() ?? false;
   });
 
+  ipcMain.handle(CHANNELS.APP_GET_LOGIN_ITEM, () => ({ supported: app.isPackaged, enabled: getOpenAtLogin() }));
+  ipcMain.handle(CHANNELS.APP_SET_LOGIN_ITEM, (_e, raw) => {
+    setOpenAtLogin((raw as { enabled?: unknown })?.enabled === true);
+    return { enabled: getOpenAtLogin() };
+  });
+
   ipcMain.handle(CHANNELS.WINDOW_POP_CHAT, (_e, raw) => {
     const args = raw as { chatId?: string; agentId?: string };
     if (!args?.chatId) return { ok: false };
@@ -577,14 +600,22 @@ app.whenReady().then(async () => {
     return { ok: true };
   });
 
-  createWindow();
+  mainWindow = createWindow();
+  hideOnClose(mainWindow, settings);
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+  });
+  setupBackground({ mainWindow: () => mainWindow, settings, icon: resolveIcon() });
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (BrowserWindow.getAllWindows().length === 0) mainWindow = createWindow();
+    else showWindow(mainWindow);
   });
 });
 
 app.on('window-all-closed', () => {
+  // With close-to-tray the main window only hides, so this fires only when the
+  // user really closed it (setting off, or no tray icon available).
   if (process.platform !== 'darwin') app.quit();
 });
 

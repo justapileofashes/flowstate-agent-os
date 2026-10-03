@@ -8,6 +8,71 @@ import { WebSearchCard } from './WebSearchCard';
 import { DevToolsSettings } from './DevToolsSettings';
 import { BrandLogo } from '../lib/brand-logos';
 
+/** Keep the app (and its routines, schedulers and automations) running in the
+ *  tray when the window closes, and optionally start it at login. */
+function BackgroundSection(): JSX.Element {
+  const [closeToTray, setCloseToTray] = useState(true);
+  const [login, setLogin] = useState<{ supported: boolean; enabled: boolean } | null>(null);
+
+  useEffect(() => {
+    void ipc.settings.get('close_to_tray').then((r) => setCloseToTray(r.value !== 'false'));
+    void ipc.loginItem.get().then(setLogin).catch(() => setLogin(null));
+  }, []);
+
+  function toggleTray(): void {
+    const next = !closeToTray;
+    setCloseToTray(next);
+    void ipc.settings.set('close_to_tray', next ? 'true' : 'false').catch(() => setCloseToTray(!next));
+  }
+
+  function toggleLogin(): void {
+    if (!login) return;
+    void ipc.loginItem.set(!login.enabled).then((r) => setLogin({ ...login, enabled: r.enabled }));
+  }
+
+  const row = (label: string, hint: string, on: boolean, onClick: () => void, disabled = false): JSX.Element => (
+    <div className="settings-row">
+      <div className="lab">
+        {label}
+        <span className="hint">{hint}</span>
+      </div>
+      <div className="row" style={{ alignItems: 'center', gap: 10 }}>
+        <button
+          type="button"
+          className={'biz-switch ' + (on ? 'on' : '')}
+          onClick={onClick}
+          disabled={disabled}
+          role="switch"
+          aria-checked={on}
+          aria-label={label}
+        >
+          <span className="biz-switch-knob" />
+        </button>
+        <span className="muted text-sm">{on ? 'On' : 'Off'}</span>
+      </div>
+    </div>
+  );
+
+  return (
+    <section className="settings-section">
+      <div className="head"><h3>Background</h3></div>
+      {row(
+        'Keep running when the window is closed',
+        'Routines, the AI Trader, Business schedules and automations keep running from the tray. Quit from the tray icon.',
+        closeToTray,
+        toggleTray,
+      )}
+      {row(
+        'Start with Windows',
+        login?.supported === false ? 'Available in the installed app.' : 'Starts minimized to the tray when you sign in.',
+        !!login?.enabled,
+        toggleLogin,
+        !login?.supported,
+      )}
+    </section>
+  );
+}
+
 /** Speech-to-text backend for the composer's mic button: any OpenAI-compatible
  *  /v1/audio/transcriptions server (OpenAI, speaches, faster-whisper-server)
  *  or a local CLI command. The API key is write-only — blank keeps the stored one. */
@@ -585,6 +650,8 @@ export function Settings({ onOpenConnectors }: { onOpenConnectors?: () => void }
       </section>
 
       <NotificationsSection />
+
+      <BackgroundSection />
 
       <VoiceInputSection />
 

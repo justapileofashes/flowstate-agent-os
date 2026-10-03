@@ -340,6 +340,10 @@ interface FlowstateApi {
     /** Serve agent HTML from the isolated flowstate-preview: scheme. */
     register: (html: string) => Promise<{ url: string }>;
   };
+  loginItem: {
+    get: () => Promise<{ supported: boolean; enabled: boolean }>;
+    set: (enabled: boolean) => Promise<{ enabled: boolean }>;
+  };
   agentLibrary: {
     list: () => Promise<{ templates: import('@shared/ipc-channels').AgentTemplateDto[] }>;
     add: (id: string) => Promise<{ agent: import('@shared/chat-types').AgentDto }>;

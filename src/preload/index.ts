@@ -579,6 +579,10 @@ const api = {
     register: (html: string): Promise<{ url: string }> =>
       ipcRenderer.invoke(CHANNELS.PREVIEW_REGISTER, { html }),
   },
+  loginItem: {
+    get: () => ipcRenderer.invoke(CHANNELS.APP_GET_LOGIN_ITEM, {}),
+    set: (enabled: boolean) => ipcRenderer.invoke(CHANNELS.APP_SET_LOGIN_ITEM, { enabled }),
+  },
   agentLibrary: {
     list: () => ipcRenderer.invoke(CHANNELS.AGENTS_LIBRARY_LIST, {}),
     add: (id: string) => ipcRenderer.invoke(CHANNELS.AGENTS_LIBRARY_ADD, { id }),

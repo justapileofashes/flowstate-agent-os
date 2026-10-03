@@ -31,6 +31,8 @@ export const CHANNELS = {
   PREVIEW_REGISTER: 'preview:register',
   DIALOG_PICK_FOLDER: 'dialog:pick-folder',
   VOICE_TRANSCRIBE: 'voice:transcribe',
+  APP_GET_LOGIN_ITEM: 'app:get-login-item',
+  APP_SET_LOGIN_ITEM: 'app:set-login-item',
   AGENTS_LIBRARY_LIST: 'agents:library-list',
   AGENTS_LIBRARY_ADD: 'agents:library-add',
   VOICE_GET_TRANSCRIBER: 'voice:get-transcriber',
