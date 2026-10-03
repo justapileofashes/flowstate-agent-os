@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { contextWindowFor, estimateTokens } from '@main/services/token-estimate';
 import { extractInlineImages } from './inline-images';
+import { isToolsUnsupportedError, parseTextToolCalls, stripToolBlocks, toTextProtocolMessages } from './text-tool-calls';
 import type {
   ChatOnceOpts,
   ChatOnceResult,
@@ -112,7 +113,49 @@ export class OllamaProvider implements LLMProvider {
     return pickNumCtx(model, estimateTokens(JSON.stringify(payload)), this.maxCtx());
   }
 
+  /** Models whose template rejected the `tools` parameter this session; they
+   *  get tools through the plain-text protocol instead. */
+  private readonly textToolModels = new Set<string>();
+
   async *chatStream(opts: ChatStreamOpts): AsyncIterable<ProviderDelta> {
+    if (opts.tools.length > 0 && this.textToolModels.has(opts.model)) {
+      yield* this.streamTextTools(opts);
+      return;
+    }
+    try {
+      yield* this.streamNative(opts);
+    } catch (err) {
+      // Thrown before anything was yielded (HTTP 400 on the request), so a retry is clean.
+      const msg = err instanceof Error ? err.message : String(err);
+      if (opts.tools.length === 0 || !isToolsUnsupportedError(msg)) throw err;
+      this.textToolModels.add(opts.model);
+      yield* this.streamTextTools(opts);
+    }
+  }
+
+  /** Text-protocol turn: tools described in the prompt, calls parsed out of
+   *  the reply. The reply is buffered so the raw tool block never shows. */
+  private async *streamTextTools(opts: ChatStreamOpts): AsyncIterable<ProviderDelta> {
+    const allowed = new Set(opts.tools.map((t) => t.name));
+    let text = '';
+    let done: ProviderDelta | null = null;
+    for await (const d of this.streamNative({
+      ...opts,
+      messages: toTextProtocolMessages(opts.messages, opts.tools),
+      tools: [],
+    })) {
+      if (d.type === 'text') text += d.text;
+      else if (d.type === 'done') done = d;
+      else yield d;
+    }
+    const calls = parseTextToolCalls(text, allowed);
+    const prose = calls.length ? stripToolBlocks(text) : text;
+    if (prose) yield { type: 'text', text: prose };
+    for (const c of calls) yield { type: 'tool-call', name: c.name, args: c.args, id: randomUUID() };
+    if (done) yield done;
+  }
+
+  private async *streamNative(opts: ChatStreamOpts): AsyncIterable<ProviderDelta> {
     // Pasted images arrive as markdown data URLs in the text; vision models
     // need them as base64 `images` instead.
     const split = opts.messages.map((m) => extractInlineImages(m.content));
@@ -136,14 +179,18 @@ export class OllamaProvider implements LLMProvider {
         ...(m.toolName ? { tool_name: m.toolName } : {}),
       })),
       stream: true,
-      tools: opts.tools.map((t) => ({
-        type: 'function',
-        function: {
-          name: t.name,
-          description: t.description,
-          parameters: t.parameters,
-        },
-      })),
+      ...(opts.tools.length
+        ? {
+            tools: opts.tools.map((t) => ({
+              type: 'function',
+              function: {
+                name: t.name,
+                description: t.description,
+                parameters: t.parameters,
+              },
+            })),
+          }
+        : {}),
     };
     body.options = { num_ctx: this.numCtx(opts.model, [split.map((s) => s.text), body.tools]) };
 
@@ -164,6 +211,10 @@ export class OllamaProvider implements LLMProvider {
     const reader = res.body.getReader();
     const dec = new TextDecoder();
     let buf = '';
+    // Models that "call" tools by writing JSON instead of native tool_calls.
+    let replyText = '';
+    let nativeCalls = 0;
+    const allowed = new Set(opts.tools.map((t) => t.name));
 
     try {
       for (;;) {
@@ -186,6 +237,7 @@ export class OllamaProvider implements LLMProvider {
 
           const text = chunk.message?.content ?? '';
           if (text.length > 0) {
+            replyText += text;
             yield { type: 'text', text };
           }
           const tools = chunk.message?.tool_calls;
@@ -194,10 +246,16 @@ export class OllamaProvider implements LLMProvider {
               const name = tc.function?.name;
               if (!name) continue;
               const args = tc.function?.arguments;
+              nativeCalls += 1;
               yield { type: 'tool-call', name, args, id: randomUUID() };
             }
           }
           if (chunk.done) {
+            if (nativeCalls === 0 && allowed.size > 0) {
+              for (const c of parseTextToolCalls(replyText, allowed)) {
+                yield { type: 'tool-call', name: c.name, args: c.args, id: randomUUID() };
+              }
+            }
             yield {
               type: 'done',
               ...(chunk.prompt_eval_count !== undefined
