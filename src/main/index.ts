@@ -12,7 +12,7 @@ import {
 import { CHANNELS } from '@shared/ipc-channels';
 import type { Database as DB } from 'better-sqlite3';
 import { join } from 'node:path';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { openDatabase, setHelperWorkspace } from './db/database';
@@ -48,6 +48,7 @@ import {
   fetchInstalledModelNames,
 } from './services/agent-model-matcher';
 import { SEED_AGENTS } from './seed-agents';
+import { SEED_LEDGER_KEY, cleanupCandidates, createFromTemplate, parseLedger, planSeeding } from './agent-library';
 import { registerIpcHandlers } from './ipc/register';
 import { getConnectedClis } from './ipc/handlers/clis';
 import { decideNotification } from './services/notify';
@@ -283,32 +284,46 @@ app.whenReady().then(async () => {
 
   const repo = new ChatRepository(db);
 
-  // Seed extra agents on first run (matched by id; never overwrites).
-  for (const seed of SEED_AGENTS) {
-    if (repo.getAgent(seed.id)) continue;
-    const wsPath = join(workspacesDir, seed.workspaceSlug);
-    try {
-      await mkdir(wsPath, { recursive: true });
-    } catch {
-      // best-effort
+  // Built-in agents: a core set on first run, the rest live in the Agent
+  // Library. The ledger keeps deleted built-ins from coming back.
+  {
+    const agentsNow = repo.listAgents();
+    const plan = planSeeding({
+      templateIds: SEED_AGENTS.map((s) => s.id),
+      existingIds: new Set(agentsNow.map((a) => a.id)),
+      ledger: parseLedger(settings.get(SEED_LEDGER_KEY)),
+    });
+    for (const id of plan.create) {
+      const seed = SEED_AGENTS.find((s) => s.id === id);
+      if (!seed) continue;
+      try {
+        await createFromTemplate(repo, seed, workspacesDir);
+        console.info(`[flowstate] seeded agent ${seed.id}`);
+      } catch (err) {
+        console.warn(`[flowstate] failed to seed ${seed.id}:`, err);
+      }
     }
-    try {
-      repo.createAgent({
-        id: seed.id,
-        name: seed.name,
-        description: seed.description,
-        specialtyTags: seed.specialtyTags,
-        systemPrompt: seed.systemPrompt,
-        model: seed.model,
-        avatarColor: seed.avatarColor,
-        workspacePath: wsPath,
-        toolPerms: seed.toolPerms,
-        approvalPolicy: seed.approvalPolicy,
+    if (plan.upgrade) {
+      // One-time: untouched, unused built-ins go back to the Library.
+      let referenced = new Set<string>();
+      try {
+        const raw = JSON.parse(readFileSync(join(app.getPath('userData'), 'routines.json'), 'utf8')) as unknown;
+        if (Array.isArray(raw)) {
+          referenced = new Set(raw.map((r) => (r as { agentId?: unknown }).agentId).filter((x): x is string => typeof x === 'string'));
+        }
+      } catch {
+        // no routines file
+      }
+      const remove = cleanupCandidates({
+        agents: agentsNow,
+        templates: SEED_AGENTS,
+        chatCounts: new Map(agentsNow.map((a) => [a.id, repo.listChats(a.id).length])),
+        referencedIds: referenced,
       });
-      console.log(`[flowstate] seeded agent ${seed.id}`);
-    } catch (err) {
-      console.warn(`[flowstate] failed to seed ${seed.id}:`, err);
+      for (const id of remove) repo.deleteAgent(id);
+      if (remove.length) console.info(`[flowstate] moved ${remove.length} unused built-in agents to the Agent Library`);
     }
+    settings.set(SEED_LEDGER_KEY, JSON.stringify(plan.ledger));
   }
 
   // Hardware-aware model auto-assignment. For each agent, infer the right

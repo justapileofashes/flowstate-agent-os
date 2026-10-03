@@ -3,6 +3,7 @@
 // are machine-specific and re-generated on import.
 
 import { z } from 'zod';
+import { toolPermsSchema } from '@shared/tool-groups';
 
 export const AGENT_PACK_KIND = 'flowstate-agent-pack';
 export const AGENT_PACK_VERSION = 1;
@@ -17,7 +18,7 @@ const packAgentSchema = z.object({
   systemPrompt: z.string().min(1).max(4000),
   model: z.string().min(1),
   avatarColor: z.string().regex(/^#[0-9a-fA-F]{6}$/),
-  toolPerms: z.object({ shell_enabled: z.boolean(), delete_enabled: z.boolean() }),
+  toolPerms: toolPermsSchema,
   approvalPolicy: z.enum(['cautious', 'trusting', 'yolo']),
 });
 

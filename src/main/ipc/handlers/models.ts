@@ -1,5 +1,7 @@
 import { ipcMain } from 'electron';
-import { CHANNELS } from '@shared/ipc-channels';
+import { CHANNELS, schemas, type AgentTemplateDto } from '@shared/ipc-channels';
+import { SEED_AGENTS } from '@main/seed-agents';
+import { createFromTemplate, templateGroups } from '@main/agent-library';
 import { detectHardware } from '@main/services/hardware-info';
 import { scoreCatalog, recommend, CATALOG } from '@main/services/model-catalog';
 import {
@@ -96,5 +98,41 @@ export function registerModelsHandlers(
       };
     });
     return { matches: out };
+  });
+
+  // Agent Library: every built-in template, flagged when it's already added.
+  ipcMain.handle(CHANNELS.AGENTS_LIBRARY_LIST, (): { templates: AgentTemplateDto[] } => {
+    const have = new Set(repo.listAgents().map((a) => a.id));
+    return {
+      templates: SEED_AGENTS.map((t) => ({
+        id: t.id,
+        name: t.name,
+        description: t.description,
+        specialtyTags: t.specialtyTags,
+        avatarColor: t.avatarColor,
+        groups: templateGroups(t.specialtyTags),
+        added: have.has(t.id),
+      })),
+    };
+  });
+
+  ipcMain.handle(CHANNELS.AGENTS_LIBRARY_ADD, async (_e, raw) => {
+    const { id } = schemas.agentsLibraryAddRequest.parse(raw);
+    const template = SEED_AGENTS.find((t) => t.id === id);
+    if (!template) throw new Error(`unknown template ${id}`);
+    const existing = repo.getAgent(id);
+    if (existing) return { agent: existing };
+    const created = await createFromTemplate(repo, template, settings.get('workspaces_dir') ?? '');
+    // Swap the template's default for a model this machine has, like startup auto-assign.
+    try {
+      const [hardware, installed] = await Promise.all([detectHardware(), fetchInstalledModelNames(provider)]);
+      const [m] = pickModelsForAgents([created], hardware, installed, readCloudAvailable());
+      if (m?.pickedModel && m.pickedModel !== created.model) {
+        db.prepare('UPDATE agents SET model = ?, updated_at = ? WHERE id = ?').run(m.pickedModel, Date.now(), id);
+      }
+    } catch {
+      // Ollama offline — keep the template's default model
+    }
+    return { agent: repo.getAgent(id)! };
   });
 }

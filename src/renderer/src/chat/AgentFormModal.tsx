@@ -6,6 +6,7 @@ import type { AgentDto } from '@shared/chat-types';
 import type { PluginSkillDto } from '@shared/ipc-channels';
 import { SYSTEM_PROMPT_PRESETS } from '@shared/system-prompt-presets';
 import { modalBackdrop, modalPanel } from '../lib/motion';
+import { TOOL_GROUPS, TOOL_GROUP_IDS } from '@shared/tool-groups';
 
 interface Props {
   mode: 'create' | 'edit';
@@ -227,6 +228,30 @@ export function AgentFormModal({ mode, initial, onClose, onSaved }: Props): JSX.
               />
               Enable file deletion (delete_file).
             </label>
+            <div className="hint" style={{ marginTop: 4 }}>
+              Toolset — fewer tools keep small local models accurate. File tools are always on.
+            </div>
+            {TOOL_GROUPS.map((g) => {
+              const groups = values.toolPerms.groups ?? TOOL_GROUP_IDS;
+              return (
+                <label key={g.id} className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={groups.includes(g.id)}
+                    onChange={(e) =>
+                      set('toolPerms', {
+                        ...values.toolPerms,
+                        groups: e.target.checked
+                          ? [...new Set([...groups, g.id])]
+                          : groups.filter((x) => x !== g.id),
+                      })
+                    }
+                  />
+                  {g.label}
+                  <span className="muted text-xs">{g.hint}</span>
+                </label>
+              );
+            })}
           </div>
         </Field>
 

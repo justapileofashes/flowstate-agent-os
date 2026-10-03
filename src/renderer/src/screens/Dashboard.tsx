@@ -6,6 +6,7 @@ import { ResourceMeters } from '../chat/ResourceMeters';
 import { CompareModal } from '../chat/CompareModal';
 import { SimpleAgentModal } from '../chat/SimpleAgentModal';
 import { AgentFormModal } from '../chat/AgentFormModal';
+import { AgentLibraryModal } from '../chat/AgentLibraryModal';
 import { useCustomizePrefs } from '../lib/CustomizeContext';
 import type { DashboardSectionId } from '../lib/customize';
 import { ipc } from '../lib/ipc';
@@ -47,7 +48,7 @@ export function Dashboard({
   onAgentsChanged,
   onRouted,
 }: Props): JSX.Element {
-  const [newAgent, setNewAgent] = useState<'simple' | 'manual' | null>(null);
+  const [newAgent, setNewAgent] = useState<'simple' | 'manual' | 'library' | null>(null);
   const [showAllAgents, setShowAllAgents] = useState(false);
   // Suggestion chips with an unfinished prompt pre-fill the Ask box.
   const [askSeed, setAskSeed] = useState<{ text: string; nonce: number } | null>(null);
@@ -56,6 +57,8 @@ export function Dashboard({
     onAgentsChanged();
     onOpenChat(agent);
   };
+  // Library adds keep the modal open so several agents can be added in a row.
+  const libraryAdded = (): void => onAgentsChanged();
   const liveStatus = useAgentLiveStatus();
   const activeCount = Array.from(liveStatus.values()).filter((s) => s === 'streaming').length;
   const greeting = useMemo(greetingForNow, []);
@@ -138,8 +141,11 @@ export function Dashboard({
                 type="button"
                 className="btn btn-sm btn-ghost"
                 style={{ marginLeft: 'auto' }}
-                onClick={() => setNewAgent('simple')}
+                onClick={() => setNewAgent('library')}
               >
+                Agent library
+              </button>
+              <button type="button" className="btn btn-sm btn-ghost" onClick={() => setNewAgent('simple')}>
                 + New agent
               </button>
             </div>
@@ -185,6 +191,9 @@ export function Dashboard({
           onCreated={agentCreated}
           onManualCreate={() => setNewAgent('manual')}
         />
+      ) : null}
+      {newAgent === 'library' ? (
+        <AgentLibraryModal onClose={() => setNewAgent(null)} onAdded={libraryAdded} />
       ) : null}
       {newAgent === 'manual' ? (
         <AgentFormModal mode="create" onClose={() => setNewAgent(null)} onSaved={agentCreated} />

@@ -1,6 +1,8 @@
 export interface ToolPerms {
   shell_enabled: boolean;
   delete_enabled: boolean;
+  /** Opt-in tool groups (see @shared/tool-groups); absent = every tool. */
+  groups?: string[];
 }
 
 export type ApprovalPolicy = 'cautious' | 'trusting' | 'yolo';

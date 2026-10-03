@@ -1,4 +1,5 @@
 import type { ToolSpec } from './types';
+import { toolAllowed } from '@shared/tool-groups';
 
 export const FILE_TOOL_SPECS: ToolSpec[] = [
   {
@@ -383,6 +384,8 @@ export const BRAIN_TOOL_SPECS: ToolSpec[] = [
 export interface ToolPermsLike {
   shell_enabled: boolean;
   delete_enabled: boolean;
+  /** Opt-in tool groups (see @shared/tool-groups); absent = every tool. */
+  groups?: readonly string[];
 }
 
 /** Build the `skill` tool spec, with the available skill names as an enum so
@@ -430,5 +433,6 @@ export function getToolSpecsForAgent(
   for (const spec of TRADING_TOOL_SPECS) result.push(spec);
   if (skills.length > 0) result.push(buildSkillToolSpec(skills));
   for (const m of mcpSpecs) result.push(m);
-  return result;
+  // Per-agent toolset: drop the opt-in groups this agent doesn't use.
+  return result.filter((s) => toolAllowed(s.name, perms.groups));
 }

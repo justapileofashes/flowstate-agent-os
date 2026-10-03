@@ -4,6 +4,7 @@ import type {
   AgentDto,
   ChatDto,
   MessageDto,
+  ToolPerms,
 } from '@shared/chat-types';
 import type { ConversationMessage } from '@main/agent/types';
 
@@ -20,7 +21,7 @@ export interface CreateAgentInput {
   systemPrompt: string;
   model: string;
   workspacePath: string;
-  toolPerms: { shell_enabled: boolean; delete_enabled: boolean };
+  toolPerms: ToolPerms;
   approvalPolicy: 'cautious' | 'trusting' | 'yolo';
 }
 
@@ -70,7 +71,7 @@ function toAgent(r: AgentDbRow): AgentRow {
     systemPrompt: r.system_prompt,
     model: r.model,
     workspacePath: r.workspace_path,
-    toolPerms: JSON.parse(r.tool_perms) as { shell_enabled: boolean; delete_enabled: boolean },
+    toolPerms: JSON.parse(r.tool_perms) as ToolPerms,
     approvalPolicy: r.approval_policy as 'cautious' | 'trusting' | 'yolo',
     createdAt: r.created_at,
     updatedAt: r.updated_at,

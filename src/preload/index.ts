@@ -579,6 +579,10 @@ const api = {
     register: (html: string): Promise<{ url: string }> =>
       ipcRenderer.invoke(CHANNELS.PREVIEW_REGISTER, { html }),
   },
+  agentLibrary: {
+    list: () => ipcRenderer.invoke(CHANNELS.AGENTS_LIBRARY_LIST, {}),
+    add: (id: string) => ipcRenderer.invoke(CHANNELS.AGENTS_LIBRARY_ADD, { id }),
+  },
   voice: {
     transcribe: (
       data: ArrayBuffer,

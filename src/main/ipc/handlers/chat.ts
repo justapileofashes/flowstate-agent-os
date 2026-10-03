@@ -10,6 +10,7 @@ import type { Orchestrator } from '@main/agent/orchestrator';
 import type { Coordinator, CoordinatorRunHandle, TeamEvent } from '@main/agent/coordinator';
 import type { AgentGenerator } from '@main/agent/agent-generator';
 import { generateAgentId } from '@main/util/agent-id';
+import { templateGroups } from '@main/agent-library';
 
 export interface ChatHandlerDeps {
   repo: ChatRepository;
@@ -97,7 +98,7 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
       model: spec.model,
       avatarColor: spec.avatarColor,
       workspacePath,
-      toolPerms: spec.toolPerms,
+      toolPerms: { ...spec.toolPerms, groups: templateGroups(spec.specialtyTags) },
       approvalPolicy: spec.approvalPolicy,
     });
     return { agent };

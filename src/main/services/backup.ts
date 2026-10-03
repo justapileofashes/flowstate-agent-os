@@ -5,6 +5,7 @@
 // serialize/parse only; file IO + agent creation live in the IPC handler.
 
 import { z } from 'zod';
+import { toolPermsSchema } from '@shared/tool-groups';
 import { SECRET_SETTING_KEYS } from './settings-service';
 
 export const BACKUP_KIND = 'flowstate-backup';
@@ -18,7 +19,7 @@ const backupAgentSchema = z.object({
   systemPrompt: z.string(),
   model: z.string(),
   avatarColor: z.string(),
-  toolPerms: z.object({ shell_enabled: z.boolean(), delete_enabled: z.boolean() }),
+  toolPerms: toolPermsSchema,
   approvalPolicy: z.enum(['cautious', 'trusting', 'yolo']),
 });
 export type BackupAgent = z.infer<typeof backupAgentSchema>;

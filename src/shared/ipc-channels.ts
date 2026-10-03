@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { toolPermsSchema } from './tool-groups';
 
 export const CHANNELS = {
   SETTINGS_GET: 'settings:get',
@@ -30,6 +31,8 @@ export const CHANNELS = {
   PREVIEW_REGISTER: 'preview:register',
   DIALOG_PICK_FOLDER: 'dialog:pick-folder',
   VOICE_TRANSCRIBE: 'voice:transcribe',
+  AGENTS_LIBRARY_LIST: 'agents:library-list',
+  AGENTS_LIBRARY_ADD: 'agents:library-add',
   VOICE_GET_TRANSCRIBER: 'voice:get-transcriber',
   VOICE_SAVE_TRANSCRIBER: 'voice:save-transcriber',
   VOICE_TEST_TRANSCRIBER: 'voice:test-transcriber',
@@ -200,10 +203,6 @@ const messageDtoSchema = z.object({
   createdAt: z.number(),
 });
 
-const toolPermsSchema = z.object({
-  shell_enabled: z.boolean(),
-  delete_enabled: z.boolean(),
-});
 
 const approvalPolicySchema = z.enum(['cautious', 'trusting', 'yolo']);
 
@@ -728,6 +727,7 @@ export const schemas = {
   }),
   flowclawRemoveRequest: z.object({ id: z.string() }),
 
+  agentsLibraryAddRequest: z.object({ id: z.string().min(1).max(80) }),
   voiceSaveTranscriberRequest: z.object({
     mode: z.enum(['openai', 'cli']),
     url: z.string().trim().max(500).optional(),
@@ -1567,6 +1567,20 @@ export interface FlowclawTestResultDto {
   ok: boolean;
   status?: number;
   error?: string;
+}
+
+// ── Agent Library ───────────────────────────────────────────────────────────
+
+/** A built-in agent template, as the Library lists it. */
+export interface AgentTemplateDto {
+  id: string;
+  name: string;
+  description: string;
+  specialtyTags: string[];
+  avatarColor: string;
+  groups: string[];
+  /** Already one of the user's agents. */
+  added: boolean;
 }
 
 // ── Voice input (speech-to-text backend) ────────────────────────────────────
