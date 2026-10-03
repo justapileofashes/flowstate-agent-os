@@ -1,10 +1,12 @@
 // The orchestrator: one typed state machine per tick.
 //
-//   reconcile → guard → data → researcher → quant → risk officer → trader → logger
+//   reconcile → guard → data → researcher → quant → desk → risk officer → trader → logger
 //
 // Deterministic control flow around the LLM ("AI does the logic; software does
-// the action"): nodes exchange typed state; the only LLM touch points are the
-// optional veto in the risk officer and rationale text in the logger. Any node
+// the action"): nodes exchange typed state; the LLM touch points are the agent
+// desk (names trade ideas; software prices them and they face the same risk
+// engine), the optional veto in the risk officer and rationale text in the
+// logger. Any node
 // that throws aborts the tick — nothing after it runs, so no order can be
 // placed on a half-built state — and the cycle is recorded as `aborted`.
 
@@ -31,6 +33,7 @@ import { liveMarketContext } from '../risk/market';
 import type { Oms } from '../execution/oms';
 import type { ApprovedTrade, BrokerAdapter } from '../execution/types';
 import type { TraderLlm } from './llm';
+import { ideaToProposal, type DeskInput, type DeskSymbol } from './desk';
 import type { Metrics } from '../monitor/metrics';
 import type { AlertEngine } from '../monitor/alerts';
 import type { PortfolioState, SignalProposal } from '../types';
@@ -158,6 +161,7 @@ export class TraderGraph {
       if (s.dataError) throw new Error(s.dataError);
       await this.researcher(s);
       await this.quant(s);
+      await this.desk(s);
       await this.riskOfficer(s);
       await this.trader(s);
     } catch (err) {
@@ -420,6 +424,85 @@ export class TraderGraph {
       const data = { base, decisions: decisions.slice(0, 60), emitted: s.proposals.map((x) => ({ symbol: x.proposal.symbol, side: x.proposal.side, confidence: x.proposal.confidence })) };
       s.quant = { node: 'quant', ok: true, ms: 0, summary: `${candidates.length} candidate(s) on ${base}`, data };
       return { summary: `scored ${decisions.length} symbol(s) on ${base}; ${s.proposals.length} signal(s)`, data, out: undefined };
+    });
+  }
+
+  /** Agent desk: the portfolio-manager agent adds trade ideas on each new
+   *  closed bar — the AI Trader's way to trade without a promoted model. Its
+   *  ideas join s.proposals and face the same risk engine, veto and OMS. A
+   *  failed or malformed reply adds nothing (the tick itself carries on). */
+  private async desk(s: TickState): Promise<void> {
+    const cfg = s.config.llm;
+    if (!cfg.desk.enabled || cfg.desk.maxTradesPerTick === 0 || !this.deps.llm.enabled()) return;
+    if (s.mode === 'live' && !cfg.desk.allowLive) return;
+    const room = s.config.signals.maxSignalsPerTick - s.proposals.length;
+    if (room <= 0) return;
+    const base = s.baseTf ?? this.enabledTimeframes(s).find((tf) => (s.latest.get(tf)?.size ?? 0) > 0) ?? null;
+    if (!base) return;
+    const rows = [...(s.latest.get(base) ?? new Map<string, LatestRow>()).entries()].filter(([sym]) => !s.stale.has(sym));
+    const latestTs = Math.max(0, ...rows.map(([, r]) => r.barTs));
+    if (latestTs <= this.deps.db.ops.get<number>(`desk:${base}`, 0) && s.cycle.trigger === 'schedule') return;
+
+    await this.node(s, 'desk', async () => {
+      this.deps.db.ops.set(`desk:${base}`, latestTs, this.deps.now());
+      const symbols: DeskSymbol[] = rows
+        .filter(([sym, r]) => !this.deps.db.signals.existsForBar(sym, base, r.barTs))
+        .map(([symbol, r]) => ({ symbol, close: r.close, atr: r.atr, regime: r.regime, barTs: r.barTs, named: r.named }));
+      if (!symbols.length) return { summary: 'nothing new to review', out: undefined };
+      const research = (s.research?.data ?? {}) as { marketRegime?: string; news?: Record<string, string[]> };
+      const input: DeskInput = {
+        config: { ...s.config, llm: { ...cfg, desk: { ...cfg.desk, maxTradesPerTick: Math.min(cfg.desk.maxTradesPerTick, room) } } },
+        baseTf: base,
+        symbols,
+        marketRegime: research.marketRegime ?? 'unknown',
+        news: research.news ?? {},
+        positions: (await this.deps.portfolio(s.account)).positions,
+        taken: new Set(s.proposals.map((p) => p.proposal.symbol)),
+      };
+      let res: Awaited<ReturnType<TraderGraph['deps']['llm']['desk']>>;
+      try {
+        res = await this.deps.llm.desk(input);
+      } catch (err) {
+        // No trades from a broken reply — but don't throw away the model's signals.
+        const msg = err instanceof Error ? err.message : String(err);
+        this.deps.metrics.inc('trader_agent_errors_total', { node: 'desk' });
+        return { summary: `no agent trades: ${msg.slice(0, 300)}`, out: undefined };
+      }
+      const now = this.deps.now();
+      for (const idea of res.ideas) {
+        const sym = symbols.find((x) => x.symbol === idea.symbol)!;
+        const p = ideaToProposal(idea, sym, input, res.call.model);
+        const sig = this.deps.db.signals.insert({
+          cycleId: s.cycle.id,
+          symbol: p.symbol,
+          side: p.side,
+          timeframe: p.timeframe,
+          entry: p.entry,
+          stop: p.stop,
+          takeProfit: p.takeProfit,
+          size: 0,
+          confidence: p.confidence,
+          edgePct: p.edgePct,
+          horizonMin: p.horizonMin,
+          modelVersion: null,
+          strategyId: null,
+          source: 'agent',
+          status: 'proposed',
+          rationale: p.drivers,
+          perTimeframe: [],
+          features: { ...p.features, base_timeframe: p.baseTimeframe, max_hold_bars: p.maxHoldBars },
+          barTs: p.barTs,
+          now,
+        });
+        s.proposals.push({ proposal: p, signalId: sig.id });
+        this.deps.emit({ type: 'signal', signal: sig });
+      }
+      if (!s.signalTs) s.signalTs = now;
+      const llm = { model: res.call.model, prompt: res.call.prompt, reply: res.call.reply, ms: res.call.ms };
+      const summary = res.ideas.length
+        ? `${res.ideas.length} agent idea(s): ${res.ideas.map((i) => `${i.side} ${i.symbol} ${(i.confidence * 100).toFixed(0)}%`).join(', ')}`
+        : `reviewed ${symbols.length} symbol(s) on ${base}; no trade`;
+      return { summary, data: { llm, ideas: res.ideas }, out: undefined };
     });
   }
 

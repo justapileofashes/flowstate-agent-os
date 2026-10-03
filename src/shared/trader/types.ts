@@ -213,6 +213,20 @@ const llmConfigSchema = z.object({
   riskReview: z.boolean().default(false),
   news: z.boolean().default(false),
   timeoutMs: z.number().int().min(2_000).max(120_000).default(20_000),
+  /** Agent desk: a portfolio-manager agent proposes trades each tick (prices
+   *  and size stay with software + the risk engine). Works without a model. */
+  desk: z
+    .object({
+      enabled: z.boolean().default(true),
+      maxTradesPerTick: z.number().int().min(0).max(5).default(2),
+      /** Ideas below this self-reported probability are dropped. */
+      minConfidence: z.number().min(0.5).max(0.95).default(0.6),
+      /** Holding horizon for agent trades, in base-timeframe bars. */
+      horizonBars: z.number().int().min(1).max(200).default(8),
+      /** Agent ideas never reach a live account unless this is on. */
+      allowLive: z.boolean().default(false),
+    })
+    .default({}),
 });
 
 const scheduleConfigSchema = z.object({
@@ -398,7 +412,7 @@ export interface TradeDto {
 }
 
 export interface NodeMessageDto {
-  node: 'data' | 'researcher' | 'quant' | 'risk' | 'trader' | 'logger' | 'reconcile' | 'guard';
+  node: 'data' | 'researcher' | 'quant' | 'desk' | 'risk' | 'trader' | 'logger' | 'reconcile' | 'guard';
   ok: boolean;
   ms: number;
   summary: string;

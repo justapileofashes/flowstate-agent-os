@@ -1,5 +1,6 @@
-// The LLM's whole job in the trader: write human-readable rationale and,
-// when enabled, act as a risk reviewer that can only VETO. It never sees an
+// The LLM's jobs in the trader: the agent desk (names trade ideas; software
+// sets prices, the risk engine sizes/rejects), human-readable rationale and,
+// when enabled, a risk reviewer that can only VETO. It never sees an
 // order endpoint. Calls go through the app's ModelGateway (retries, circuit
 // breaker, failover, cost accounting) with a hard per-tick budget, a timeout,
 // and a reasoning cache reused on retries.
@@ -11,6 +12,7 @@ import { ModelGateway, extractJsonObject } from '@main/business/providers/gatewa
 import type { TraderConfig } from '@shared/trader/types';
 import type { SignalProposal } from '../types';
 import type { RiskDecision } from '../risk/manager';
+import { deskPrompt, parseDeskReply, type DeskIdea, type DeskInput } from './desk';
 
 export interface LlmDeps {
   provider: LLMProvider;
@@ -130,6 +132,14 @@ export class TraderLlm {
     } catch {
       return null; // rationale is text, not a decision — the template covers it
     }
+  }
+
+  /** The agent desk's one call per tick. Throws on a malformed reply (the
+   *  caller then adds no agent trades). */
+  async desk(input: DeskInput): Promise<{ ideas: DeskIdea[]; call: LlmCall }> {
+    const { system, user } = deskPrompt(input);
+    const call = await this.call(system, user, true);
+    return { ideas: parseDeskReply(call.reply, input), call };
   }
 
   /**
