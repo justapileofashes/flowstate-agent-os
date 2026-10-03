@@ -11,6 +11,7 @@ import type {
   PullProgress,
 } from './llm-provider';
 import { CATALOG } from '@main/services/model-catalog';
+import { CUSTOM_PREFIX } from './custom-provider';
 import { extractInlineImages, hasInlineImages } from './inline-images';
 
 export type ProviderKind =
@@ -21,9 +22,11 @@ export type ProviderKind =
   | 'groq'
   | 'mistral'
   | 'xai'
+  | 'custom'
   | 'ollama';
 
 export function providerKindForModel(model: string): ProviderKind {
+  if (model.startsWith(CUSTOM_PREFIX)) return 'custom';
   const entry = CATALOG.find((m) => m.id === model);
   if (entry?.cloud) return entry.cloud;
 
@@ -54,6 +57,8 @@ export interface ProviderRouterOpts {
   groq: LLMProvider;
   mistral: LLMProvider;
   xai: LLMProvider;
+  /** User-configured OpenAI-compatible server (`custom/<model>`). */
+  custom: LLMProvider;
 }
 
 export class ProviderRouter implements LLMProvider {

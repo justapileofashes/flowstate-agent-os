@@ -49,6 +49,7 @@ import {
 } from './services/agent-model-matcher';
 import { SEED_AGENTS } from './seed-agents';
 import { modelStrength } from './agent/model-strength';
+import { CUSTOM_API_KEY_KEY, CUSTOM_BASE_URL_KEY, CustomOpenAIProvider } from './agent/custom-provider';
 import {
   HIDDEN_FLAG,
   getOpenAtLogin,
@@ -302,6 +303,10 @@ app.whenReady().then(async () => {
     groq: groqProvider,
     mistral: mistralProvider,
     xai: xaiProvider,
+    custom: new CustomOpenAIProvider(
+      () => settings.get(CUSTOM_BASE_URL_KEY) ?? '',
+      () => settings.get(CUSTOM_API_KEY_KEY) ?? '',
+    ),
   });
 
   const repo = new ChatRepository(db);

@@ -8,6 +8,61 @@ import { WebSearchCard } from './WebSearchCard';
 import { DevToolsSettings } from './DevToolsSettings';
 import { BrandLogo } from '../lib/brand-logos';
 
+/** Any OpenAI-compatible server (LM Studio, llama.cpp, vLLM, Jan, OpenRouter…).
+ *  Its models show up everywhere models are picked, as `custom/<id>`. */
+function CustomServerRow(): JSX.Element {
+  const [url, setUrl] = useState('');
+  const [key, setKey] = useState('');
+  const [status, setStatus] = useState<string>('');
+
+  useEffect(() => {
+    void ipc.settings.get('custom_openai_base_url').then((r) => setUrl(r.value ?? ''));
+  }, []);
+
+  async function save(): Promise<void> {
+    await ipc.settings.set('custom_openai_base_url', url.trim());
+    if (key) await ipc.settings.set('custom_openai_api_key', key);
+    setKey('');
+    setStatus('Saved — checking…');
+    try {
+      const { models } = await ipc.chat.listModels();
+      const n = models.filter((m) => m.name.startsWith('custom/')).length;
+      setStatus(n ? `Connected — ${n} model${n === 1 ? '' : 's'} available as custom/…` : 'Saved, but no models found at that URL.');
+    } catch {
+      setStatus('Saved, but the server did not answer.');
+    }
+  }
+
+  return (
+    <div className="settings-row">
+      <div className="lab">
+        OpenAI-compatible server
+        <span className="hint">
+          LM Studio, llama.cpp, vLLM, Jan, OpenRouter… e.g. <span className="mono">http://localhost:1234/v1</span>. Key
+          optional; stored encrypted.
+        </span>
+      </div>
+      <div className="col gap-2" style={{ minWidth: 280 }}>
+        <input className="field mono" placeholder="http://localhost:1234/v1" value={url} onChange={(e) => setUrl(e.target.value)} />
+        <input
+          className="field mono"
+          type="password"
+          placeholder="API key (optional, write-only)"
+          value={key}
+          onChange={(e) => setKey(e.target.value)}
+          autoComplete="off"
+        />
+        <div className="row gap-2" style={{ alignItems: 'center' }}>
+          <button type="button" className="btn btn-sm" onClick={() => void save()}>
+            Save
+          </button>
+          {status && <span className="muted text-sm">{status}</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** Keep the app (and its routines, schedulers and automations) running in the
  *  tray when the window closes, and optionally start it at login. */
 function BackgroundSection(): JSX.Element {
@@ -614,6 +669,7 @@ export function Settings({ onOpenConnectors }: { onOpenConnectors?: () => void }
             setTimeout(() => setState((s) => ({ ...s, saveStatus: null })), 2500);
           }}
         />
+        <CustomServerRow />
       </section>
 
       <WebSearchCard {...(onOpenConnectors ? { onOpenConnectors } : {})} />

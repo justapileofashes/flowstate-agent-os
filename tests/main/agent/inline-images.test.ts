@@ -49,6 +49,7 @@ describe('inline images', () => {
       groq: spy,
       mistral: spy,
       xai: spy,
+      custom: spy,
     });
     for await (const _ of router.chatStream({ model: 'claude-sonnet-5', messages: [{ role: 'user', content: MSG }], tools: [] })) {
       // drain

@@ -22,6 +22,7 @@ export const SECRET_SETTING_KEYS: ReadonlySet<string> = new Set([
   'groq_api_key',
   'mistral_api_key',
   'xai_api_key',
+  'custom_openai_api_key',
   'brave_search_api_key',
   'tavily_api_key',
   'alpaca_key_id',
