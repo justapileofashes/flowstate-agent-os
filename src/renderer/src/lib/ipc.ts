@@ -340,6 +340,10 @@ interface FlowstateApi {
     /** Serve agent HTML from the isolated flowstate-preview: scheme. */
     register: (html: string) => Promise<{ url: string }>;
   };
+  /** How strong each model is; no models → the orchestrator (planner) model. */
+  modelStrength: (
+    models?: string[],
+  ) => Promise<{ models: Array<{ model: string; strength: 'cloud' | 'local-large' | 'local-small' }> }>;
   loginItem: {
     get: () => Promise<{ supported: boolean; enabled: boolean }>;
     set: (enabled: boolean) => Promise<{ enabled: boolean }>;

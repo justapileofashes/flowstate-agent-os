@@ -7,6 +7,7 @@ import { CompareModal } from '../chat/CompareModal';
 import { SimpleAgentModal } from '../chat/SimpleAgentModal';
 import { AgentFormModal } from '../chat/AgentFormModal';
 import { AgentLibraryModal } from '../chat/AgentLibraryModal';
+import { HeavyModelNotice } from '../chat/HeavyModelNotice';
 import { useCustomizePrefs } from '../lib/CustomizeContext';
 import type { DashboardSectionId } from '../lib/customize';
 import { ipc } from '../lib/ipc';
@@ -182,6 +183,9 @@ export function Dashboard({
       className="screen-enter h-full overflow-y-auto"
       style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', paddingTop: 24, paddingBottom: 24 }}
     >
+      <div style={{ margin: '0 48px' }}>
+        <HeavyModelNotice feature="Team runs" />
+      </div>
       {prefs.dashboardSections
         .filter((s) => s.visible)
         .map((s) => renderSection(s.id))}

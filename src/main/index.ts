@@ -48,6 +48,7 @@ import {
   fetchInstalledModelNames,
 } from './services/agent-model-matcher';
 import { SEED_AGENTS } from './seed-agents';
+import { modelStrength } from './agent/model-strength';
 import {
   HIDDEN_FLAG,
   getOpenAtLogin,
@@ -521,6 +522,17 @@ app.whenReady().then(async () => {
     }
     return 'qwen2.5:7b';
   };
+
+  // Heavy features (team runs, Business, AI Trader desk) ask which model they'd
+  // run on and how strong it is; with no models given, the orchestrator model.
+  ipcMain.handle(CHANNELS.MODELS_STRENGTH, async (_e, raw) => {
+    const asked = (raw as { models?: unknown })?.models;
+    const models =
+      Array.isArray(asked) && asked.length
+        ? asked.filter((m): m is string => typeof m === 'string').slice(0, 20)
+        : [await resolveOrchestratorModel()];
+    return { models: models.map((model) => ({ model, strength: modelStrength(model) })) };
+  });
 
   const coordinator = new Coordinator({
     provider,

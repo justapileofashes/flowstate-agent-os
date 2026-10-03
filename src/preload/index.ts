@@ -579,6 +579,7 @@ const api = {
     register: (html: string): Promise<{ url: string }> =>
       ipcRenderer.invoke(CHANNELS.PREVIEW_REGISTER, { html }),
   },
+  modelStrength: (models?: string[]) => ipcRenderer.invoke(CHANNELS.MODELS_STRENGTH, { models }),
   loginItem: {
     get: () => ipcRenderer.invoke(CHANNELS.APP_GET_LOGIN_ITEM, {}),
     set: (enabled: boolean) => ipcRenderer.invoke(CHANNELS.APP_SET_LOGIN_ITEM, { enabled }),
