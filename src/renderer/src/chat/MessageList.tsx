@@ -88,6 +88,7 @@ function activityLabel(streaming: StreamingAssistant): string {
     case 'list_dir':        return path ? `Listing ${shorten(path)}` : 'Listing files';
     case 'search_files':    return query ? `Searching for "${shorten(query, 30)}"` : 'Searching workspace';
     case 'web_search':      return query ? `Web-searching "${shorten(query, 30)}"` : 'Searching the web';
+    case 'fetch_url':       return typeof args['url'] === 'string' ? `Reading ${shorten(args['url'], 40)}` : 'Reading page';
     case 'shell':           return cmd ? `Running ${shorten(cmd, 30)}` : 'Running shell command';
     case 'run_code':        return 'Running code';
     case 'design_artifact': return 'Generating artifact';

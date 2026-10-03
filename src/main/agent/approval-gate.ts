@@ -57,6 +57,8 @@ export class ApprovalGate {
     // MCP tools are arbitrary external actions (send, delete, pay…).
     if (toolName.startsWith('mcp__')) return true;
     if (toolName === 'delete_file') return true;
+    // An edit always changes an existing file, so cautious agents ask like an overwrite.
+    if (toolName === 'edit_file') return policy === 'cautious';
     if (toolName === 'write_file') {
       if (policy === 'cautious') return isOverwrite;
       return false;

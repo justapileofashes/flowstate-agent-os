@@ -30,6 +30,9 @@ export const CHANNELS = {
   PREVIEW_REGISTER: 'preview:register',
   DIALOG_PICK_FOLDER: 'dialog:pick-folder',
   VOICE_TRANSCRIBE: 'voice:transcribe',
+  VOICE_GET_TRANSCRIBER: 'voice:get-transcriber',
+  VOICE_SAVE_TRANSCRIBER: 'voice:save-transcriber',
+  VOICE_TEST_TRANSCRIBER: 'voice:test-transcriber',
   DIALOG_PICK_FILE: 'dialog:pick-file',
   CLOUD_TEST_CONNECTION: 'cloud:test-connection',
   OLLAMA_PULL: 'ollama:pull',
@@ -58,17 +61,6 @@ export const CHANNELS = {
   FLOWCLAW_SAVE: 'flowclaw:save',
   FLOWCLAW_TEST: 'flowclaw:test',
   FLOWCLAW_REMOVE: 'flowclaw:remove',
-  ZOOM_SAVE_CREDS: 'zoom:save-creds',
-  ZOOM_TEST: 'zoom:test',
-  ZOOM_RECORD: 'zoom:record',
-  ZOOM_JOBS: 'zoom:jobs',
-  ZOOM_OPEN_RECORDING: 'zoom:open-recording',
-  CAPTURE_START: 'capture:start',
-  CAPTURE_CHUNK: 'capture:chunk',
-  CAPTURE_STOP: 'capture:stop',
-  CAPTURE_JOBS: 'capture:jobs',
-  CAPTURE_SAVE_TRANSCRIBER: 'capture:save-transcriber',
-  CAPTURE_TEST_TRANSCRIBER: 'capture:test-transcriber',
   // Business agent: one typed RPC channel (schemas in @shared/business/api).
   BUSINESS_RPC: 'business:rpc',
   BUSINESS_EVENT: 'business:event', // broadcast main → renderer
@@ -736,36 +728,7 @@ export const schemas = {
   }),
   flowclawRemoveRequest: z.object({ id: z.string() }),
 
-  zoomSaveCredsRequest: z.object({
-    accountId: z.string().trim().min(1).max(120),
-    clientId: z.string().trim().min(1).max(120),
-    clientSecret: z.string().trim().min(1).max(300),
-  }),
-  zoomTestRequest: z.object({}),
-  zoomRecordRequest: z
-    .object({
-      meetingId: z.string().trim().min(1).max(40).optional(),
-      topic: z.string().trim().min(1).max(200).optional(),
-      agentId: z.string().min(1),
-      connectionId: z.string().min(1),
-      model: z.string().trim().max(120).optional(),
-    })
-    .refine((v) => !!v.meetingId || !!v.topic, {
-      message: 'meetingId or topic is required',
-    }),
-  zoomJobsRequest: z.object({}),
-  zoomOpenRecordingRequest: z.object({ path: z.string().min(1).max(500) }),
-
-  captureStartRequest: z.object({
-    title: z.string().trim().min(1).max(200),
-    agentId: z.string().min(1),
-    connectionId: z.string().min(1),
-    model: z.string().trim().max(120).optional(),
-  }),
-  // capture:chunk is NOT zod-validated — binary payload over structured clone;
-  // the handler checks the shape itself.
-  captureStopRequest: z.object({ captureId: z.string().min(1) }),
-  captureSaveTranscriberRequest: z.object({
+  voiceSaveTranscriberRequest: z.object({
     mode: z.enum(['openai', 'cli']),
     url: z.string().trim().max(500).optional(),
     apiKey: z.string().trim().max(500).optional(),
@@ -1606,73 +1569,16 @@ export interface FlowclawTestResultDto {
   error?: string;
 }
 
-// ── Zoom meeting recorder ────────────────────────────────────────────────────
+// ── Voice input (speech-to-text backend) ────────────────────────────────────
 
-export type ZoomJobStatusDto =
-  | 'armed'
-  | 'waiting'
-  | 'downloading'
-  | 'summarizing'
-  | 'done'
-  | 'error';
-
-export interface ZoomJobDto {
-  id: string;
-  meetingId: string;
-  topic: string;
-  agentId: string;
-  connectionId: string;
+/** Saved transcriber config as the renderer may see it — the API key never
+ *  crosses IPC, only whether one is stored. */
+export interface VoiceTranscriberDto {
+  mode: 'openai' | 'cli';
+  url?: string;
   model?: string;
-  status: ZoomJobStatusDto;
-  chatId?: string;
-  recordingFiles?: string[];
-  shareUrl?: string;
-  joinUrl?: string;
-  error?: string;
-  createdAt: number;
-  updatedAt: number;
-}
-
-export type ZoomRecordRequest = z.infer<typeof schemas.zoomRecordRequest>;
-export interface ZoomRecordResponse {
-  jobId: string;
-  joinUrl?: string;
-  error?: string;
-}
-export interface ZoomJobsResponse {
-  jobs: ZoomJobDto[];
-}
-
-// ── System-audio capture (webinar recorder) ─────────────────────────────────
-
-export type CaptureJobStatusDto =
-  | 'recording'
-  | 'transcribing'
-  | 'summarizing'
-  | 'done'
-  | 'error';
-
-export interface CaptureJobDto {
-  id: string;
-  title: string;
-  agentId: string;
-  connectionId: string;
-  model?: string;
-  status: CaptureJobStatusDto;
-  audioPath: string;
-  bytes: number;
-  chatId?: string;
-  error?: string;
-  createdAt: number;
-  updatedAt: number;
-}
-
-export type CaptureStartRequest = z.infer<typeof schemas.captureStartRequest>;
-export interface CaptureStartResponse {
-  captureId: string;
-}
-export interface CaptureJobsResponse {
-  jobs: CaptureJobDto[];
+  command?: string;
+  hasKey: boolean;
 }
 
 export interface AgentAutoAssignMatchDto {

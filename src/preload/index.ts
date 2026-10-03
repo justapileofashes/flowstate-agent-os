@@ -585,6 +585,15 @@ const api = {
       mime: string,
     ): Promise<{ text?: string; error?: string; notConfigured?: boolean }> =>
       ipcRenderer.invoke(CHANNELS.VOICE_TRANSCRIBE, { data, mime }),
+    getTranscriber: () => ipcRenderer.invoke(CHANNELS.VOICE_GET_TRANSCRIBER, {}),
+    saveTranscriber: (cfg: {
+      mode: 'openai' | 'cli';
+      url?: string;
+      apiKey?: string;
+      model?: string;
+      command?: string;
+    }) => ipcRenderer.invoke(CHANNELS.VOICE_SAVE_TRANSCRIBER, cfg),
+    testTranscriber: () => ipcRenderer.invoke(CHANNELS.VOICE_TEST_TRANSCRIBER, {}),
   },
   dialogs: {
     pickFolder: (opts: { title?: string; defaultPath?: string } = {}): Promise<{ path: string | null }> =>
@@ -648,37 +657,6 @@ const api = {
       ipcRenderer.on('routines:fired', handler);
       return () => ipcRenderer.removeListener('routines:fired', handler);
     },
-  },
-  zoom: {
-    saveCreds: (creds: { accountId: string; clientId: string; clientSecret: string }) =>
-      ipcRenderer.invoke(CHANNELS.ZOOM_SAVE_CREDS, creds),
-    test: () => ipcRenderer.invoke(CHANNELS.ZOOM_TEST, {}),
-    record: (req: {
-      meetingId?: string;
-      topic?: string;
-      agentId: string;
-      connectionId: string;
-      model?: string;
-    }) => ipcRenderer.invoke(CHANNELS.ZOOM_RECORD, req),
-    jobs: () => ipcRenderer.invoke(CHANNELS.ZOOM_JOBS, {}),
-    openRecording: (path: string) => ipcRenderer.invoke(CHANNELS.ZOOM_OPEN_RECORDING, { path }),
-  },
-  capture: {
-    start: (req: { title: string; agentId: string; connectionId: string; model?: string }) =>
-      ipcRenderer.invoke(CHANNELS.CAPTURE_START, req),
-    // Structured clone carries the ArrayBuffer to main intact.
-    chunk: (captureId: string, data: ArrayBuffer) =>
-      ipcRenderer.invoke(CHANNELS.CAPTURE_CHUNK, { captureId, data }),
-    stop: (captureId: string) => ipcRenderer.invoke(CHANNELS.CAPTURE_STOP, { captureId }),
-    jobs: () => ipcRenderer.invoke(CHANNELS.CAPTURE_JOBS, {}),
-    saveTranscriber: (cfg: {
-      mode: 'openai' | 'cli';
-      url?: string;
-      apiKey?: string;
-      model?: string;
-      command?: string;
-    }) => ipcRenderer.invoke(CHANNELS.CAPTURE_SAVE_TRANSCRIBER, cfg),
-    testTranscriber: () => ipcRenderer.invoke(CHANNELS.CAPTURE_TEST_TRANSCRIBER, {}),
   },
   business: {
     rpc: (method: string, params?: unknown) => ipcRenderer.invoke(CHANNELS.BUSINESS_RPC, { method, params: params ?? {} }),

@@ -29,6 +29,7 @@ import { detectPatterns } from '@shared/patterns';
 import { forecastCone } from '@shared/forecast';
 import { buildStockChart } from '@shared/stock-chart';
 import { searchWeb } from '@main/services/web-search';
+import { fetchPageDigest } from '@main/services/web-fetch';
 import type { WebSearchToolOutput } from '@shared/web-search-result';
 import type { Range } from '@shared/market-types';
 
@@ -38,6 +39,12 @@ const argsSchemas = {
   read_file: z.object({ path: z.string() }),
   list_dir: z.object({ path: z.string() }),
   write_file: z.object({ path: z.string(), content: z.string() }),
+  edit_file: z.object({
+    path: z.string(),
+    old_string: z.string(),
+    new_string: z.string(),
+    replace_all: z.boolean().optional(),
+  }),
   delete_file: z.object({ path: z.string() }),
   search_files: z.object({
     pattern: z.string(),
@@ -72,6 +79,7 @@ const argsSchemas = {
     query: z.string().min(1).max(200),
     limit: z.number().int().positive().max(10).optional(),
   }),
+  fetch_url: z.object({ url: z.string().min(4).max(2000) }),
   stock_data: z.object({
     symbol: z.string().min(1).max(20),
     range: z.enum(['1m', '3m', '6m', '1y', '2y', '5y', 'max']).optional(),
@@ -332,6 +340,11 @@ export class ToolDispatcher {
           const result = await this.deps.fileTools.writeFile(a.path, a.content);
           return ok(toolCallId, name, JSON.stringify(result));
         }
+        case 'edit_file': {
+          const a = parsed.data as z.infer<typeof argsSchemas.edit_file>;
+          const result = await this.deps.fileTools.editFile(a.path, a.old_string, a.new_string, a.replace_all);
+          return ok(toolCallId, name, JSON.stringify(result));
+        }
         case 'delete_file': {
           const a = parsed.data as z.infer<typeof argsSchemas.delete_file>;
           await this.deps.fileTools.deleteFile(a.path);
@@ -406,6 +419,15 @@ export class ToolDispatcher {
               name,
               err instanceof Error ? err.message : String(err),
             );
+          }
+        }
+        case 'fetch_url': {
+          const a = parsed.data as z.infer<typeof argsSchemas.fetch_url>;
+          try {
+            const page = await fetchPageDigest(a.url, signal ? { signal } : {});
+            return ok(toolCallId, name, JSON.stringify(page));
+          } catch (err) {
+            return failure(toolCallId, name, err instanceof Error ? err.message : String(err));
           }
         }
         case 'stock_data': {

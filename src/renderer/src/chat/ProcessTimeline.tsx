@@ -46,6 +46,7 @@ function describe(call: ToolCallView): StepCopy {
     case 'list_dir':        return { verb: 'Listing',      detail: path ?? 'directory' };
     case 'search_files':    return { verb: 'Searching workspace', detail: query ?? '' };
     case 'web_search':      return { verb: 'Searching the web', detail: query ?? '' };
+    case 'fetch_url':       return { verb: 'Reading page', detail: typeof args['url'] === 'string' ? args['url'] : '' };
     case 'shell':           return { verb: 'Running',      detail: command ?? 'shell command' };
     case 'run_code':        return { verb: 'Running code', detail: source ? source.split('\n')[0]!.slice(0, 50) : '' };
     case 'design_artifact': return { verb: 'Drafting artifact', detail: `${title ?? ''}${language ? ` (${language})` : ''}`.trim() };
@@ -87,6 +88,7 @@ function IconFor({ name }: { name: string }): JSX.Element {
       );
     case 'search_files':
     case 'web_search':
+    case 'fetch_url':
     case 'brain_search':
       return (
         <svg viewBox="0 0 14 14" {...base}>

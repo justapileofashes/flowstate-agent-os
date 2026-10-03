@@ -12,6 +12,10 @@ describe('shouldCheckpoint', () => {
     expect(shouldCheckpoint('run_shell', { isOverwrite: false })).toBe(true);
   });
 
+  it('always checkpoints edit_file (it changes an existing file)', () => {
+    expect(shouldCheckpoint('edit_file', { isOverwrite: false })).toBe(true);
+  });
+
   it('checkpoints write_file only when overwriting', () => {
     expect(shouldCheckpoint('write_file', { isOverwrite: true })).toBe(true);
     expect(shouldCheckpoint('write_file', { isOverwrite: false })).toBe(false);

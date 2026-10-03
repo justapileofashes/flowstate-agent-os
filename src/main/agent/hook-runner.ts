@@ -31,13 +31,59 @@ export interface HookOutcome {
 const HOOK_TIMEOUT_MS = 10_000;
 const MAX_OUTPUT = 256 * 1024;
 
-function matcherMatches(matcher: string | undefined, toolName: string | undefined): boolean {
+/** Claude Code's name and `tool_input` shape for one of our tools, so CC plugin
+ *  hooks (matchers like "Bash" or "Edit|Write", scripts reading
+ *  `tool_input.file_path`) work unchanged. Unknown tools pass through — MCP
+ *  tools already share CC's `mcp__<server>__<tool>` naming. */
+export function claudeCodeTool(name: string, input: unknown): { name: string; input: unknown } {
+  let args = input;
+  if (typeof args === 'string') {
+    try {
+      args = JSON.parse(args);
+    } catch {
+      // not JSON — hand the raw string through
+    }
+  }
+  const obj = args && typeof args === 'object' && !Array.isArray(args) ? (args as Record<string, unknown>) : null;
+  // Keep our `path` and add CC's `file_path`, so either kind of hook script reads it.
+  const withFilePath = (): unknown =>
+    obj && typeof obj['path'] === 'string' ? { ...obj, file_path: obj['path'] } : args;
+  switch (name) {
+    case 'run_shell':
+      return { name: 'Bash', input: args };
+    case 'read_file':
+      return { name: 'Read', input: withFilePath() };
+    case 'write_file':
+      return { name: 'Write', input: withFilePath() };
+    case 'edit_file':
+      return { name: 'Edit', input: withFilePath() };
+    case 'list_dir':
+      return { name: 'LS', input: args };
+    case 'search_files':
+      return { name: obj?.['kind'] === 'content' ? 'Grep' : 'Glob', input: args };
+    case 'web_search':
+      return { name: 'WebSearch', input: args };
+    case 'fetch_url':
+      return { name: 'WebFetch', input: args };
+    default:
+      return { name, input: args };
+  }
+}
+
+/** Claude Code matcher semantics: a plain name (or `a|b` list) matches exactly,
+ *  anything else is a regex. `names` holds our tool name and its CC alias. */
+export function matcherMatches(matcher: string | undefined, names: string[]): boolean {
   if (!matcher || matcher === '*') return true;
-  if (!toolName) return false;
+  if (names.length === 0) return false;
+  if (/^[\w|]+$/.test(matcher)) {
+    const wanted = matcher.split('|').filter(Boolean);
+    return names.some((n) => wanted.includes(n));
+  }
   try {
-    return new RegExp(matcher).test(toolName);
+    const re = new RegExp(matcher);
+    return names.some((n) => re.test(n));
   } catch {
-    return matcher === toolName || toolName.includes(matcher);
+    return names.includes(matcher);
   }
 }
 
@@ -121,17 +167,18 @@ export class HookRunner {
   /** Fire all hooks bound to `event` whose matcher accepts the tool. Returns a
    *  block decision (only meaningful for PreToolUse). */
   async fire(event: string, ctx: HookContext): Promise<HookOutcome> {
-    const hooks = this.getHooks().filter(
-      (h) => h.event === event && matcherMatches(h.matcher, ctx.toolName),
-    );
+    const cc = ctx.toolName ? claudeCodeTool(ctx.toolName, ctx.toolInput) : null;
+    const names = ctx.toolName && cc ? [...new Set([ctx.toolName, cc.name])] : [];
+    const hooks = this.getHooks().filter((h) => h.event === event && matcherMatches(h.matcher, names));
     if (hooks.length === 0) return { blocked: false };
 
+    // Hooks come from Claude Code plugins, so they see CC's tool name and input.
     const input = JSON.stringify({
       session_id: ctx.chatId ?? ctx.streamId ?? '',
       hook_event_name: event,
       cwd: ctx.cwd,
-      ...(ctx.toolName ? { tool_name: ctx.toolName } : {}),
-      ...(ctx.toolInput !== undefined ? { tool_input: ctx.toolInput } : {}),
+      ...(cc ? { tool_name: cc.name } : {}),
+      ...(ctx.toolInput !== undefined ? { tool_input: cc ? cc.input : ctx.toolInput } : {}),
     });
 
     for (const h of hooks) {

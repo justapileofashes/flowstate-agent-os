@@ -5,11 +5,11 @@
 /** Default minimum gap between auto-checkpoints for one agent run. */
 export const DEFAULT_CHECKPOINT_GAP_MS = 15_000;
 
-const DESTRUCTIVE = new Set(['delete_file', 'run_shell']);
+const DESTRUCTIVE = new Set(['delete_file', 'run_shell', 'edit_file']);
 
 /**
  * Should we snapshot before this tool call?
- * - delete_file / run_shell: always (they can destroy or mutate the workspace).
+ * - delete_file / run_shell / edit_file: always (they destroy or mutate existing files).
  * - write_file: only when overwriting an existing file (a fresh write is reversible
  *   by simply deleting the new file, and snapshotting every write is wasteful).
  */

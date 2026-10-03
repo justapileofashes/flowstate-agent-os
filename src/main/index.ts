@@ -1,7 +1,6 @@
 import {
   app,
   BrowserWindow,
-  desktopCapturer,
   dialog,
   ipcMain,
   Menu,
@@ -220,19 +219,6 @@ app.whenReady().then(async () => {
     app.quit();
     return;
   }
-
-  // System-audio loopback: makes renderer getDisplayMedia({audio:true}) yield
-  // desktop audio on Windows (Electron 33+). Used by the webinar Capture card.
-  session.defaultSession.setDisplayMediaRequestHandler(
-    (_request, callback) => {
-      desktopCapturer.getSources({ types: ['screen'] }).then((sources) => {
-        const first = sources[0];
-        if (first) callback({ video: first, audio: 'loopback' });
-        else callback({});
-      });
-    },
-    { useSystemPicker: false },
-  );
 
   // Encrypt secret settings (API keys, broker keys) at rest via the OS
   // keychain so the SQLite file never holds them in plaintext.

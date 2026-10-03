@@ -49,6 +49,7 @@ describe('ApprovalGate.shouldPrompt — cautious', () => {
     expect(gate.shouldPrompt('cautious', 'delete_file', { path: 'a' }, false)).toBe(true);
     expect(gate.shouldPrompt('cautious', 'write_file', { path: 'new' }, false)).toBe(false);
     expect(gate.shouldPrompt('cautious', 'write_file', { path: 'old' }, true)).toBe(true);
+    expect(gate.shouldPrompt('cautious', 'edit_file', { path: 'old' }, false)).toBe(true);
     expect(gate.shouldPrompt('cautious', 'read_file', { path: 'a' }, false)).toBe(false);
   });
 });
@@ -59,6 +60,7 @@ describe('ApprovalGate.shouldPrompt — trusting', () => {
     expect(gate.shouldPrompt('trusting', 'run_shell', {}, false)).toBe(true);
     expect(gate.shouldPrompt('trusting', 'delete_file', {}, false)).toBe(true);
     expect(gate.shouldPrompt('trusting', 'write_file', {}, true)).toBe(false);
+    expect(gate.shouldPrompt('trusting', 'edit_file', {}, false)).toBe(false);
   });
 });
 

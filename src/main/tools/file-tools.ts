@@ -114,6 +114,45 @@ export class FileTools {
     return { created: !existed };
   }
 
+  /** Replace an exact snippet in an existing file. Fails (so the agent can
+   *  retry with more context) when old_string is missing or ambiguous. */
+  async editFile(
+    relPath: string,
+    oldString: string,
+    newString: string,
+    replaceAll = false,
+  ): Promise<{ replacements: number }> {
+    if (oldString === '') throw new Error('old_string is empty — use write_file to create a file');
+    if (oldString === newString) throw new Error('old_string and new_string are identical');
+    const full = await resolveSafeReal(this.workspaceRoot, relPath);
+    const s = await stat(full);
+    if (s.isDirectory()) throw new Error(`refusing to edit directory: ${relPath}`);
+    const text = await readFile(full, 'utf8');
+
+    let from = oldString;
+    let to = newString;
+    let count = text.split(from).length - 1;
+    // Models write LF; Windows files are often CRLF.
+    if (count === 0 && text.includes('\r\n') && from.includes('\n')) {
+      from = from.replace(/\r?\n/g, '\r\n');
+      to = to.replace(/\r?\n/g, '\r\n');
+      count = text.split(from).length - 1;
+    }
+    if (count === 0) {
+      throw new Error(`old_string not found in ${relPath} — it must match the file exactly, including whitespace`);
+    }
+    if (count > 1 && !replaceAll) {
+      throw new Error(
+        `old_string occurs ${count} times in ${relPath} — add surrounding lines to make it unique, or set replace_all`,
+      );
+    }
+    // split/join and slice, not String.replace: `$&`-style patterns in new_string stay literal.
+    const idx = text.indexOf(from);
+    const next = replaceAll ? text.split(from).join(to) : text.slice(0, idx) + to + text.slice(idx + from.length);
+    await writeFile(full, next, 'utf8');
+    return { replacements: replaceAll ? count : 1 };
+  }
+
   async deleteFile(relPath: string): Promise<void> {
     const full = await resolveSafeReal(this.workspaceRoot, relPath);
     const s = await stat(full);

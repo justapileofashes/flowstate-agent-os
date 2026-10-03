@@ -346,6 +346,15 @@ interface FlowstateApi {
       data: ArrayBuffer,
       mime: string,
     ) => Promise<{ text?: string; error?: string; notConfigured?: boolean }>;
+    getTranscriber: () => Promise<{ config: import('@shared/ipc-channels').VoiceTranscriberDto | null }>;
+    saveTranscriber: (cfg: {
+      mode: 'openai' | 'cli';
+      url?: string;
+      apiKey?: string;
+      model?: string;
+      command?: string;
+    }) => Promise<{ ok: boolean }>;
+    testTranscriber: () => Promise<{ ok: boolean; error?: string }>;
   };
   dialogs: {
     pickFolder: (opts?: { title?: string; defaultPath?: string }) => Promise<{ path: string | null }>;
@@ -405,42 +414,6 @@ interface FlowstateApi {
       Promise<import('@shared/ipc-channels').RoutinesToggleResponse>;
     runNow: (id: string) => Promise<import('@shared/ipc-channels').RoutinesRunNowResponse>;
     onFired: (cb: (payload: { id: string; chatId: string }) => void) => () => void;
-  };
-  zoom: {
-    saveCreds: (creds: {
-      accountId: string;
-      clientId: string;
-      clientSecret: string;
-    }) => Promise<{ ok: boolean }>;
-    test: () => Promise<{ ok: boolean; error?: string }>;
-    record: (req: {
-      meetingId?: string;
-      topic?: string;
-      agentId: string;
-      connectionId: string;
-      model?: string;
-    }) => Promise<import('@shared/ipc-channels').ZoomRecordResponse>;
-    jobs: () => Promise<import('@shared/ipc-channels').ZoomJobsResponse>;
-    openRecording: (path: string) => Promise<{ ok: boolean }>;
-  };
-  capture: {
-    start: (req: {
-      title: string;
-      agentId: string;
-      connectionId: string;
-      model?: string;
-    }) => Promise<import('@shared/ipc-channels').CaptureStartResponse>;
-    chunk: (captureId: string, data: ArrayBuffer) => Promise<{ ok: boolean }>;
-    stop: (captureId: string) => Promise<{ ok: boolean }>;
-    jobs: () => Promise<import('@shared/ipc-channels').CaptureJobsResponse>;
-    saveTranscriber: (cfg: {
-      mode: 'openai' | 'cli';
-      url?: string;
-      apiKey?: string;
-      model?: string;
-      command?: string;
-    }) => Promise<{ ok: boolean }>;
-    testTranscriber: () => Promise<{ ok: boolean; error?: string }>;
   };
   business: {
     rpc: <M extends import('@shared/business/api').BizMethod>(

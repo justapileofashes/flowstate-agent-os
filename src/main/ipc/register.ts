@@ -14,8 +14,7 @@ import { registerFileHandlers } from './handlers/files';
 import { registerModelsHandlers } from './handlers/models';
 import { registerMcpHandlers } from './handlers/mcp';
 import { registerFlowclawHandlers } from './handlers/flowclaw';
-import { registerZoomHandlers } from './handlers/zoom';
-import { registerCaptureHandlers } from './handlers/capture';
+import { registerVoiceHandlers } from './handlers/voice';
 import { registerBusinessHandlers } from './handlers/business';
 import { registerBrainHandlers } from './handlers/brain';
 import { registerSnapshotsHandlers } from './handlers/snapshots';
@@ -84,8 +83,7 @@ export function registerIpcHandlers(deps: {
   registerModelsHandlers(deps.provider, deps.repo, deps.db, deps.settings);
   registerMcpHandlers({ manager: deps.mcpManager, settings: deps.settings });
   registerFlowclawHandlers({ settings: deps.settings });
-  registerZoomHandlers({ settings: deps.settings, repo: deps.repo });
-  registerCaptureHandlers({ settings: deps.settings, repo: deps.repo });
+  registerVoiceHandlers({ settings: deps.settings });
   registerBusinessHandlers({
     db: deps.db,
     settings: deps.settings,

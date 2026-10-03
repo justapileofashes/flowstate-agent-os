@@ -306,7 +306,7 @@ function extractFileChanges(messages: MessageDto[]): Array<{
   for (const m of messages) {
     if (m.role !== 'assistant' || !m.toolCalls) continue;
     for (const call of m.toolCalls) {
-      if (call.name !== 'write_file' && call.name !== 'delete_file') continue;
+      if (call.name !== 'write_file' && call.name !== 'edit_file' && call.name !== 'delete_file') continue;
       const args = (call.args ?? {}) as { path?: unknown };
       if (typeof args.path !== 'string') continue;
       const result = results.get(call.id);
@@ -317,7 +317,7 @@ function extractFileChanges(messages: MessageDto[]): Array<{
         : 'pending';
       out.push({
         id: call.id,
-        op: call.name === 'write_file' ? 'write' : 'delete',
+        op: call.name === 'delete_file' ? 'delete' : 'write',
         path: args.path,
         status,
       });

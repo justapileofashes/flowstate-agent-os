@@ -30,7 +30,7 @@ export const FILE_TOOL_SPECS: ToolSpec[] = [
   {
     name: 'write_file',
     description:
-      'Create or overwrite a UTF-8 file. Parent directories are created automatically.',
+      'Create a new UTF-8 file, or replace a whole file. To change part of an existing file, use edit_file instead. Parent directories are created automatically.',
     parameters: {
       type: 'object',
       properties: {
@@ -38,6 +38,21 @@ export const FILE_TOOL_SPECS: ToolSpec[] = [
         content: { type: 'string' },
       },
       required: ['path', 'content'],
+    },
+  },
+  {
+    name: 'edit_file',
+    description:
+      'Change part of an existing file by replacing old_string with new_string. old_string must match the file exactly (whitespace included) and occur once — include a few surrounding lines to make it unique, or set replace_all. Read the file first.',
+    parameters: {
+      type: 'object',
+      properties: {
+        path: { type: 'string' },
+        old_string: { type: 'string', description: 'Exact text to replace.' },
+        new_string: { type: 'string', description: 'Replacement text.' },
+        replace_all: { type: 'boolean', description: 'Replace every occurrence. Default false.' },
+      },
+      required: ['path', 'old_string', 'new_string'],
     },
   },
   {
@@ -107,6 +122,19 @@ export const WEB_SEARCH_TOOL_SPEC: ToolSpec = {
       limit: { type: 'number', description: 'Max results, 1-10. Default 5.' },
     },
     required: ['query'],
+  },
+};
+
+export const FETCH_URL_TOOL_SPEC: ToolSpec = {
+  name: 'fetch_url',
+  description:
+    'Open a public web page and read it: title, headings, readable text and links. Use after web_search to read a result in full, or for any URL the user gives. Public http(s) sites only.',
+  parameters: {
+    type: 'object',
+    properties: {
+      url: { type: 'string' },
+    },
+    required: ['url'],
   },
 };
 
@@ -396,6 +424,7 @@ export function getToolSpecsForAgent(
   // shell-equivalent: same perm gate + approval prompt (see approval-gate).
   if (perms.shell_enabled) result.push(CODE_INTERPRETER_TOOL_SPEC);
   result.push(WEB_SEARCH_TOOL_SPEC);
+  result.push(FETCH_URL_TOOL_SPEC);
   result.push(STOCK_DATA_TOOL_SPEC);
   result.push(STOCK_CHART_TOOL_SPEC);
   for (const spec of TRADING_TOOL_SPECS) result.push(spec);

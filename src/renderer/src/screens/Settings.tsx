@@ -8,6 +8,134 @@ import { WebSearchCard } from './WebSearchCard';
 import { DevToolsSettings } from './DevToolsSettings';
 import { BrandLogo } from '../lib/brand-logos';
 
+/** Speech-to-text backend for the composer's mic button: any OpenAI-compatible
+ *  /v1/audio/transcriptions server (OpenAI, speaches, faster-whisper-server)
+ *  or a local CLI command. The API key is write-only — blank keeps the stored one. */
+function VoiceInputSection(): JSX.Element {
+  const [mode, setMode] = useState<'openai' | 'cli'>('openai');
+  const [url, setUrl] = useState('https://api.openai.com/v1');
+  const [model, setModel] = useState('whisper-1');
+  const [key, setKey] = useState('');
+  const [hasKey, setHasKey] = useState(false);
+  const [command, setCommand] = useState('whisper {file} --model base --output_format txt');
+  const [status, setStatus] = useState<'idle' | 'saved' | 'testing' | 'ok' | 'fail'>('idle');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    void ipc.voice.getTranscriber().then(({ config }) => {
+      if (!config) return;
+      setMode(config.mode);
+      if (config.url) setUrl(config.url);
+      if (config.model) setModel(config.model);
+      if (config.command) setCommand(config.command);
+      setHasKey(config.hasKey);
+    });
+  }, []);
+
+  async function save(): Promise<void> {
+    setError('');
+    try {
+      await ipc.voice.saveTranscriber({
+        mode,
+        ...(mode === 'openai' ? { url, model } : { command }),
+        ...(mode === 'openai' && key ? { apiKey: key } : {}),
+      });
+      if (key) setHasKey(true);
+      setKey('');
+      setStatus('saved');
+    } catch (err) {
+      setStatus('fail');
+      setError(ipcErrorMessage(err));
+    }
+  }
+
+  async function test(): Promise<void> {
+    setStatus('testing');
+    setError('');
+    try {
+      const r = await ipc.voice.testTranscriber();
+      setStatus(r.ok ? 'ok' : 'fail');
+      if (!r.ok) setError(r.error ?? 'failed');
+    } catch (err) {
+      setStatus('fail');
+      setError(ipcErrorMessage(err));
+    }
+  }
+
+  return (
+    <section className="settings-section">
+      <div className="head">
+        <h3>Voice input</h3>
+        <span className="muted text-xs">Speech-to-text for the composer's mic button.</span>
+      </div>
+      <div className="row gap-2" style={{ marginBottom: 12 }}>
+        <button
+          type="button"
+          className={'btn btn-sm ' + (mode === 'openai' ? 'btn-primary' : 'btn-ghost')}
+          onClick={() => setMode('openai')}
+        >
+          OpenAI-compatible
+        </button>
+        <button
+          type="button"
+          className={'btn btn-sm ' + (mode === 'cli' ? 'btn-primary' : 'btn-ghost')}
+          onClick={() => setMode('cli')}
+        >
+          Local command
+        </button>
+      </div>
+      {mode === 'openai' ? (
+        <>
+          <label className="settings-row">
+            <span className="lab">Endpoint</span>
+            <input className="field mono" value={url} onChange={(e) => setUrl(e.target.value)} />
+          </label>
+          <label className="settings-row">
+            <span className="lab">Model</span>
+            <input className="field mono" value={model} onChange={(e) => setModel(e.target.value)} />
+          </label>
+          <label className="settings-row">
+            <span className="lab">
+              API key
+              <span className="hint">Optional for local servers. Stored encrypted; never shown again.</span>
+            </span>
+            <input
+              className="field mono"
+              type="password"
+              value={key}
+              onChange={(e) => setKey(e.target.value)}
+              placeholder={hasKey ? '•••••••• (saved — blank keeps it)' : '(none)'}
+              autoComplete="off"
+            />
+          </label>
+        </>
+      ) : (
+        <label className="settings-row">
+          <span className="lab">
+            Command template
+            <span className="hint">
+              <span className="mono">{'{file}'}</span> is replaced with the audio path; the command must print
+              the transcript.
+            </span>
+          </span>
+          <input className="field mono" value={command} onChange={(e) => setCommand(e.target.value)} />
+        </label>
+      )}
+      {error && <div className="hint" style={{ color: 'var(--bad)' }}>{error}</div>}
+      <div className="row gap-2" style={{ marginTop: 12, alignItems: 'center' }}>
+        <button type="button" className="btn btn-sm btn-primary" onClick={() => void save()}>
+          Save
+        </button>
+        <button type="button" className="btn btn-sm" onClick={() => void test()} disabled={status === 'testing'}>
+          {status === 'testing' ? 'Testing…' : 'Test'}
+        </button>
+        {status === 'saved' && <span className="muted text-sm">Saved</span>}
+        {status === 'ok' && <span className="muted text-sm">Working</span>}
+      </div>
+    </section>
+  );
+}
+
 function NotificationsSection(): JSX.Element {
   const [enabled, setEnabled] = useState(true);
   const [loaded, setLoaded] = useState(false);
@@ -457,6 +585,8 @@ export function Settings({ onOpenConnectors }: { onOpenConnectors?: () => void }
       </section>
 
       <NotificationsSection />
+
+      <VoiceInputSection />
 
       <UpdatesSection />
 

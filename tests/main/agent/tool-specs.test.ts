@@ -2,13 +2,13 @@ import { describe, it, expect } from 'vitest';
 import { FILE_TOOL_SPECS } from '@main/agent/tool-specs';
 
 describe('FILE_TOOL_SPECS', () => {
-  it('exports an array of 5 tools', () => {
-    expect(FILE_TOOL_SPECS).toHaveLength(5);
+  it('exports an array of 6 tools', () => {
+    expect(FILE_TOOL_SPECS).toHaveLength(6);
   });
 
   it('includes all expected tool names', () => {
     const names = FILE_TOOL_SPECS.map((t) => t.name).sort();
-    expect(names).toEqual(['delete_file', 'list_dir', 'read_file', 'search_files', 'write_file']);
+    expect(names).toEqual(['delete_file', 'edit_file', 'list_dir', 'read_file', 'search_files', 'write_file']);
   });
 
   it('every tool has a non-empty description', () => {

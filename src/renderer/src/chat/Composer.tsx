@@ -184,8 +184,8 @@ export function Composer({
   }
 
   /** Voice dictation, push-to-talk: click the mic to record, click again to
-   *  stop; the clip is transcribed by the speech-to-text backend set up for
-   *  Capture (Flowclaw → Appliances), and the text appends to the composer.
+   *  stop; the clip is transcribed by the speech-to-text backend set up in
+   *  Settings → Voice input, and the text appends to the composer.
    *  (Chromium's Web Speech API has no speech service inside Electron.) */
   async function toggleVoice(): Promise<void> {
     if (listening) {
@@ -215,7 +215,7 @@ export function Composer({
         try {
           const r = await ipc.voice.transcribe(await blob.arrayBuffer(), blob.type);
           if (r.notConfigured) {
-            setVoiceNote('Voice input needs a speech-to-text backend — set one up in Flowclaw → Appliances → Capture.');
+            setVoiceNote('Voice input needs a speech-to-text backend — set one up in Settings → Voice input.');
           } else if (r.error) {
             setVoiceNote(`Transcription failed: ${r.error}`);
           } else {

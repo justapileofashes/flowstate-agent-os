@@ -1,4 +1,4 @@
-// Pluggable speech-to-text for webinar captures. Two backends: any
+// Pluggable speech-to-text for composer voice input. Two backends: any
 // OpenAI-compatible /v1/audio/transcriptions server (speaches,
 // faster-whisper-server, OpenAI itself) or a user CLI command template.
 import { spawn } from 'node:child_process';
@@ -100,6 +100,8 @@ export class CliTranscriber implements Transcriber {
   }
 }
 
+// Key predates the voice-input rename (it came from the removed Capture
+// appliance); kept so existing saved configs keep working.
 export const TRANSCRIBER_KEY = 'capture_transcriber';
 
 export class TranscriberStore {
