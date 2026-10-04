@@ -22,6 +22,8 @@ import { SecretStore, electronSafeStorageBackend } from './services/secret-store
 import { initAutoUpdate } from './services/auto-update';
 import { OllamaClient } from './services/ollama-client';
 import { DEFAULT_MAX_CTX, OllamaProvider } from './agent/ollama-provider';
+import { providerKindForModel } from './agent/provider-router';
+import { contextWindowFor } from './services/token-estimate';
 import { AnthropicProvider } from './agent/anthropic-provider';
 import { OpenAIProvider } from './agent/openai-provider';
 import { GeminiProvider } from './agent/gemini-provider';
@@ -458,6 +460,18 @@ app.whenReady().then(async () => {
   }
 
   const manager = new AgentSessionManager({
+    // History gets ~60% of the window; system prompt, tools and the reply need the rest.
+    compaction: {
+      budget: (model) => {
+        const win = contextWindowFor(model);
+        if (providerKindForModel(model) !== 'ollama') return win ? Math.floor(win * 0.6) : 0;
+        const n = Number(settings.get('ollama_max_ctx'));
+        const maxCtx = Number.isFinite(n) && n >= 4096 ? n : DEFAULT_MAX_CTX;
+        return Math.floor(Math.min(win || maxCtx, maxCtx) * 0.6);
+      },
+      get: (k) => settings.get(k),
+      set: (k, v) => settings.set(k, v),
+    },
     provider,
     repo,
     approvalGate,

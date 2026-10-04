@@ -18,8 +18,24 @@ import type { SnapshotService } from '@main/services/snapshot-service';
 import type { SkillRegistry } from '@main/services/skill-registry';
 import type { HookRunner } from './hook-runner';
 import { buildCliContext, type DetectedCli } from '@main/services/cli-catalog';
+import type { ConversationMessage } from './types';
+import {
+  SUMMARY_KEY_PREFIX,
+  SUMMARY_SYSTEM,
+  applySummary,
+  compactionCut,
+  historyTokens,
+  transcriptForSummary,
+  type StoredSummary,
+} from './compaction';
 
 export interface AgentSessionManagerOpts {
+  /** Chat compaction: history token budget for a model + where summaries are kept. */
+  compaction?: {
+    budget: (model: string) => number;
+    get: (key: string) => string | null;
+    set: (key: string, value: string) => void;
+  };
   provider: LLMProvider;
   repo: ChatRepository;
   approvalGate: ApprovalGate;
@@ -54,6 +70,48 @@ export class AgentSessionManager {
   private readonly active = new Map<string, ActiveEntry>();
 
   constructor(private readonly opts: AgentSessionManagerOpts) {}
+
+  /** History to send: the stored summary stands in for old turns while that
+   *  fits the budget; on overflow, older turns are (re)summarized once. Any
+   *  failure falls back to the full history. */
+  private async compact(chatId: string, history: ConversationMessage[], model: string): Promise<ConversationMessage[]> {
+    const c = this.opts.compaction;
+    if (!c) return history;
+    const budget = c.budget(model);
+    if (budget <= 0 || historyTokens(history) <= budget) return history;
+    const key = SUMMARY_KEY_PREFIX + chatId;
+    let stored: StoredSummary | null = null;
+    try {
+      const raw = c.get(key);
+      stored = raw ? (JSON.parse(raw) as StoredSummary) : null;
+      if (stored && (typeof stored.count !== 'number' || stored.count > history.length)) stored = null;
+    } catch {
+      stored = null;
+    }
+    if (stored) {
+      const reused = applySummary(history, stored);
+      if (historyTokens(reused) <= budget) return reused;
+    }
+    const cut = compactionCut(history, budget);
+    if (cut === 0 || (stored && cut <= stored.count)) return stored ? applySummary(history, stored) : history;
+    try {
+      const res = await this.opts.provider.chatOnce({
+        model,
+        messages: [
+          { role: 'system', content: SUMMARY_SYSTEM },
+          { role: 'user', content: transcriptForSummary(history.slice(stored?.count ?? 0, cut), stored?.summary) },
+        ],
+      });
+      const summary = res.text.trim();
+      if (!summary) return history;
+      const next: StoredSummary = { count: cut, summary };
+      c.set(key, JSON.stringify(next));
+      return applySummary(history, next);
+    } catch (err) {
+      console.warn('[flowstate] chat compaction failed; sending full history:', err);
+      return history;
+    }
+  }
 
   async start(chatId: string): Promise<{ streamId: string; session: AgentSession }> {
     const chat = this.opts.repo.getChat(chatId);
@@ -95,10 +153,13 @@ export class AgentSessionManager {
       ? buildCliContext(this.opts.getConnectedClis?.() ?? [])
       : '';
 
+    const model = override && override.length > 0 ? override : agent.model;
+    const compacted = await this.compact(chatId, history, model);
+
     const effectiveAgent = {
       ...agent,
       workspacePath,
-      model: override && override.length > 0 ? override : agent.model,
+      model,
       systemPrompt:
         agent.systemPrompt +
         workflowFraming +
@@ -130,7 +191,7 @@ export class AgentSessionManager {
       streamId,
       agent: effectiveAgent,
       chat,
-      history,
+      history: compacted,
       provider: this.opts.provider,
       dispatcher,
       repo: this.opts.repo,
