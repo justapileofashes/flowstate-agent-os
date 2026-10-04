@@ -21,9 +21,41 @@ export function resolveModelChain(
   push(primary);
   for (const m of userChain) push(m);
   // If the primary itself isn't available, the chain may still have valid
-  // fallbacks — but if nothing is available, surface the primary so the caller
-  // produces a sensible "model not found" error rather than silently no-op'ing.
-  return out.length > 0 ? out : [primary];
+  // fallbacks — but if nothing in it is, run on whatever is installed rather
+  // than 404'ing every turn. With nothing installed at all substituteModel
+  // hands the primary back, so the caller still reports "model not found".
+  return out.length > 0 ? out : [substituteModel(primary, available)];
+}
+
+/** Ordered preference when a wanted model is missing and its family is too. */
+const SUBSTITUTE_PREFIXES = [
+  'qwen2.5-coder:',
+  'qwen2.5:',
+  'qwen3-coder:',
+  'qwen3:',
+  'llama3.3:',
+  'llama3.1:',
+  'mistral-nemo:',
+  'mistral-small:',
+];
+
+/**
+ * Map a wanted model onto one that is actually installed. Agent rows persist a
+ * model name forever — seeded agents ship asking for qwen2.5-coder:14b, and a
+ * team run whose synthesizer wants a model nobody pulled dies at the last step
+ * with a 404. Prefer another size of the same family, then the ladder, then
+ * anything. An empty `installed` means we could not ask Ollama: leave the name
+ * alone so the caller reports a clear "model not found" instead of a guess.
+ */
+export function substituteModel(want: string, installed: string[]): string {
+  if (installed.length === 0 || installed.includes(want)) return want;
+  const family = want.split(':')[0];
+  const sameFamily = family ? installed.find((m) => m.startsWith(family + ':')) : undefined;
+  return (
+    sameFamily ??
+    SUBSTITUTE_PREFIXES.map((p) => installed.find((m) => m.startsWith(p))).find(Boolean) ??
+    installed[0]!
+  );
 }
 
 /** Next untried model in the chain, or null when exhausted. */

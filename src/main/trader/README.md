@@ -27,6 +27,16 @@ Design, reference systems and deviations from the source plan:
 3. Backtests → run an event-driven backtest and a Simulation.
 4. Switch **AI trading on**. It trades the paper simulator; ticks run ~20 s after each closed bar of the smallest enabled timeframe while a market is open.
 
+## Agent desk
+
+Each tick with a new closed bar, a portfolio-manager agent (`orchestrator/desk.ts`) reads a compact snapshot (features, regime, news when enabled, open positions) and names up to `llm.desk.maxTradesPerTick` ideas: symbol, side, a self-reported probability and a thesis. That's how the AI Trader trades when no model passed the gate, and it adds ideas on top of model signals.
+
+- The agent never sets numbers: entry is the last close, stop/take-profit come from `risk.stopAtrMult` / `takeProfitAtrMult` × ATR, and the risk engine sizes and may reject exactly as for model signals (then the optional veto, then the OMS).
+- A reply that isn't `{"trades":[...]}` adds no trades and is logged on the cycle's `desk` node; the tick carries on with any model signals.
+- Ideas under `llm.desk.minConfidence`, unknown symbols, shorts when `risk.allowShort` is off, and symbols already signalled this bar are dropped.
+- Paper only unless `llm.desk.allowLive` is on (and live trading itself still needs the build flag + go-live checklist).
+- Strong models matter here; the settings card recommends a cloud model when the desk would run on a small local one.
+
 ## Kill switch
 
 Header → **Kill switch**:

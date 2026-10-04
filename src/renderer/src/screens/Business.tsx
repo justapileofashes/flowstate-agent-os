@@ -18,6 +18,7 @@ import { Usage } from './business/Usage';
 import { CeoChat } from './business/CeoChat';
 import { BizSettings } from './business/Settings';
 import { ApprovalDrawer } from './business/ApprovalDrawer';
+import { HeavyModelNotice } from '../chat/HeavyModelNotice';
 
 const TABS: Array<{ id: BizTab; label: string }> = [
   { id: 'overview', label: 'Overview' },
@@ -266,6 +267,12 @@ function CompanyView({
             </button>
           </div>
         </div>
+
+        <HeavyModelNotice
+          feature="Business agent"
+          models={[company.config.models.planner, company.config.models.writer].filter(Boolean)}
+          onOpenSettings={() => setTab('settings')}
+        />
 
         <div className="biz-tabs" role="tablist">
           {TABS.map((t) => (

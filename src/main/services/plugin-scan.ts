@@ -83,17 +83,12 @@ export async function scanSkills(pluginDir: string, pluginId: string | null): Pr
   return out;
 }
 
-/** Standalone skills (e.g. `~/.claude/skills/<name>/SKILL.md`). */
-export async function scanStandaloneSkills(root: string): Promise<SkillEntry[]> {
-  const out: SkillEntry[] = [];
-  for (const name of await listDirs(root)) {
-    const entry = await readSkillDir(join(root, name), null);
-    if (entry) out.push(entry);
-  }
-  return out;
-}
-
-async function readSkillDir(dir: string, pluginId: string | null): Promise<SkillEntry | null> {
+/** One skill folder (`<dir>/SKILL.md`); null when missing or undescribed. */
+export async function readSkillDir(
+  dir: string,
+  pluginId: string | null,
+  source?: string,
+): Promise<SkillEntry | null> {
   const path = join(dir, 'SKILL.md');
   const raw = await readText(path);
   if (!raw) return null;
@@ -101,7 +96,9 @@ async function readSkillDir(dir: string, pluginId: string | null): Promise<Skill
   const name = data.name?.trim() || basename(dir);
   const description = data.description?.trim() || '';
   if (!description) return null; // a skill with no description can't be triggered
-  return { name, description, path, dir, pluginId };
+  const entry: SkillEntry = { name, description, path, dir, pluginId };
+  if (source) entry.source = source;
+  return entry;
 }
 
 /** Commands: `<dir>/commands/*.md`. */

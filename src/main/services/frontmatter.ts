@@ -13,7 +13,7 @@ const FENCE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
 
 /** Split a `---` YAML frontmatter block from the markdown body. */
 export function parseFrontmatter(input: string): Frontmatter {
-  const text = input.replace(/^﻿/, ''); // strip BOM
+  const text = input.replace(/^\uFEFF/, ''); // strip BOM
   const m = FENCE.exec(text);
   if (!m) return { data: {}, body: text.trim() };
 

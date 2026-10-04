@@ -22,6 +22,15 @@ describe('getToolSpecsForAgent skill tool', () => {
   });
 });
 
+describe('getToolSpecsForAgent run_code gating', () => {
+  it('offers run_code only when shell is enabled', () => {
+    const off = getToolSpecsForAgent({ shell_enabled: false, delete_enabled: true }, [], []);
+    expect(off.find((s) => s.name === 'run_code')).toBeUndefined();
+    const on = getToolSpecsForAgent({ shell_enabled: true, delete_enabled: true }, [], []);
+    expect(on.find((s) => s.name === 'run_code')).toBeDefined();
+  });
+});
+
 describe('buildSkillToolSpec', () => {
   it('requires a name parameter', () => {
     const spec = buildSkillToolSpec([{ name: 'x' }]);
@@ -32,11 +41,18 @@ describe('buildSkillToolSpec', () => {
 describe('HookRunner', () => {
   const ctx = { cwd: tmpdir(), toolName: 'run_shell', agentId: 'a1' };
 
-  it('blocks a PreToolUse tool call when the hook exits non-zero', async () => {
-    const hooks: HookEntry[] = [{ event: 'PreToolUse', command: 'exit 3', pluginId: 'p' }];
+  it('blocks a PreToolUse tool call when the hook exits 2 (Claude Code contract)', async () => {
+    const hooks: HookEntry[] = [{ event: 'PreToolUse', command: 'exit 2', pluginId: 'p' }];
     const runner = new HookRunner(() => hooks);
     const out = await runner.fire('PreToolUse', ctx);
     expect(out.blocked).toBe(true);
+  });
+
+  it('treats other non-zero exits as hook errors, not vetoes', async () => {
+    const hooks: HookEntry[] = [{ event: 'PreToolUse', command: 'exit 3', pluginId: 'p' }];
+    const runner = new HookRunner(() => hooks);
+    const out = await runner.fire('PreToolUse', ctx);
+    expect(out.blocked).toBe(false);
   });
 
   it('does not block when the hook exits zero', async () => {

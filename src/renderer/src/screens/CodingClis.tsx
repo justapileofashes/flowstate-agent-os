@@ -29,10 +29,10 @@ export function CodingClis(): JSX.Element {
   const [launch, setLaunch] = useState<Launch | null>(null);
   const [scanning, setScanning] = useState(false);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (force = false) => {
     setScanning(true);
     try {
-      const [{ clis: detected }, state] = await Promise.all([ipc.clis.detect(), ipc.clis.get()]);
+      const [{ clis: detected }, state] = await Promise.all([ipc.clis.detect(force), ipc.clis.get()]);
       setClis(detected);
       setConnected(new Set(state.connected));
       setHomeDir(state.homeDir);
@@ -121,7 +121,7 @@ export function CodingClis(): JSX.Element {
       </motion.header>
 
       <div className="row gap-3 mb-5" style={{ alignItems: 'center', flexWrap: 'wrap' }}>
-        <button type="button" className="btn btn-sm" onClick={() => void load()} disabled={scanning}>
+        <button type="button" className="btn btn-sm" onClick={() => void load(true)} disabled={scanning}>
           {scanning ? 'Scanning…' : 'Re-scan'}
         </button>
         {clis ? (

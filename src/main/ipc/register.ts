@@ -14,8 +14,7 @@ import { registerFileHandlers } from './handlers/files';
 import { registerModelsHandlers } from './handlers/models';
 import { registerMcpHandlers } from './handlers/mcp';
 import { registerFlowclawHandlers } from './handlers/flowclaw';
-import { registerZoomHandlers } from './handlers/zoom';
-import { registerCaptureHandlers } from './handlers/capture';
+import { registerVoiceHandlers } from './handlers/voice';
 import { registerBusinessHandlers } from './handlers/business';
 import { registerBrainHandlers } from './handlers/brain';
 import { registerSnapshotsHandlers } from './handlers/snapshots';
@@ -33,6 +32,7 @@ import { registerStocksHandlers } from './handlers/stocks';
 import { registerTraderHandlers } from './handlers/trader';
 import { registerPluginHandlers } from './handlers/plugins';
 import { registerTerminalHandlers } from './handlers/terminal';
+import { registerUpdateHandlers } from './handlers/updates';
 import type { McpManager } from '@main/services/mcp-manager';
 import type { PluginManager } from '@main/services/plugin-manager';
 import type { SecondBrain } from '@main/services/second-brain';
@@ -79,11 +79,11 @@ export function registerIpcHandlers(deps: {
     workspacesDir: deps.workspacesDir,
   });
   registerFileHandlers();
+  registerUpdateHandlers();
   registerModelsHandlers(deps.provider, deps.repo, deps.db, deps.settings);
   registerMcpHandlers({ manager: deps.mcpManager, settings: deps.settings });
   registerFlowclawHandlers({ settings: deps.settings });
-  registerZoomHandlers({ settings: deps.settings, repo: deps.repo });
-  registerCaptureHandlers({ settings: deps.settings, repo: deps.repo });
+  registerVoiceHandlers({ settings: deps.settings });
   registerBusinessHandlers({
     db: deps.db,
     settings: deps.settings,
@@ -112,6 +112,7 @@ export function registerIpcHandlers(deps: {
     mcpManager: deps.mcpManager,
     repo: deps.repo,
     workspacesDir: deps.workspacesDir,
+    provider: deps.provider,
   });
   registerTerminalHandlers();
   registerScheduleHandlers({ repo: deps.repo, manager: deps.manager });

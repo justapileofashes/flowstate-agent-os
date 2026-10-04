@@ -7,6 +7,7 @@ import { strategyParamsSchema, type StrategyDto, type TraderConfig } from '@shar
 import { CardHead, Empty, Modal, Switch } from '../business/ui';
 import { errText, tr, useTr, when } from './api';
 import { Pill } from './ui';
+import { HeavyModelNotice } from '../../chat/HeavyModelNotice';
 
 type Path = Array<string | number>;
 
@@ -277,11 +278,20 @@ export function RiskSettings({ onSaved }: { onSaved: () => void }): JSX.Element 
           </div>
         </div>
         <div className="card biz-card">
-          <CardHead title="LLM & monitoring" sub="The LLM writes rationale and may veto; it never sizes or places orders." />
+          <CardHead
+            title="Agents & monitoring"
+            sub="The agent desk proposes trades every new bar (also without a promoted model). Software sets prices, the risk engine sizes and can reject; agents never place orders directly."
+          />
+          <HeavyModelNotice feature="AI Trader agent desk" {...(draft.llm.model ? { models: [draft.llm.model] } : {})} />
           <div className="tr-grid two">
             <Bool label="LLM enabled" path={['llm', 'enabled']} cfg={draft} set={set} />
             <Text label="Model (blank = app default)" path={['llm', 'model']} cfg={draft} set={set} placeholder="e.g. claude-haiku-4-5" />
             <Num label="Max LLM calls / tick" path={['llm', 'maxCallsPerTick']} cfg={draft} set={set} />
+            <Bool label="Agent desk proposes trades" path={['llm', 'desk', 'enabled']} cfg={draft} set={set} />
+            <Num label="Desk: max trades / tick" path={['llm', 'desk', 'maxTradesPerTick']} cfg={draft} set={set} />
+            <Num label="Desk: min confidence" path={['llm', 'desk', 'minConfidence']} cfg={draft} set={set} step={0.05} />
+            <Num label="Desk: holding horizon (bars)" path={['llm', 'desk', 'horizonBars']} cfg={draft} set={set} />
+            <Bool label="Desk may trade live (off = paper only)" path={['llm', 'desk', 'allowLive']} cfg={draft} set={set} />
             <Bool label="Write rationale" path={['llm', 'rationale']} cfg={draft} set={set} />
             <Bool label="LLM risk veto (slower)" path={['llm', 'riskReview']} cfg={draft} set={set} />
             <Bool label="News headlines" path={['llm', 'news']} cfg={draft} set={set} />

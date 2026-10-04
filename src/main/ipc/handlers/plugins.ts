@@ -1,17 +1,22 @@
-import { ipcMain, BrowserWindow } from 'electron';
+import { ipcMain } from 'electron';
+import { broadcast } from '@main/util/broadcast';
 import { join } from 'node:path';
 import { mkdir } from 'node:fs/promises';
 import { CHANNELS, schemas } from '@shared/ipc-channels';
 import type {
   PluginDto,
+  PluginInstallFromResponse,
   PluginMarketplaceDto,
   PluginMarketplacePluginDto,
   PluginSkillDto,
+  PluginSkillSourceDto,
 } from '@shared/ipc-channels';
 import type { PluginManager } from '@main/services/plugin-manager';
 import type { McpManager } from '@main/services/mcp-manager';
 import type { ChatRepository } from '@main/repos/chat-repository';
 import type { InstalledPlugin } from '@main/services/plugin-types';
+import type { LLMProvider } from '@main/agent/llm-provider';
+import { providerKindForModel } from '@main/agent/provider-router';
 
 function toDto(p: InstalledPlugin): PluginDto {
   return {
@@ -21,6 +26,7 @@ function toDto(p: InstalledPlugin): PluginDto {
     description: p.description,
     origin: p.origin.kind,
     ...(p.origin.kind === 'marketplace' ? { marketplaceId: p.origin.marketplaceId } : {}),
+    ...(p.origin.kind !== 'marketplace' && p.origin.source ? { originSource: p.origin.source } : {}),
     enabled: p.enabled,
     hooksConsent: p.hooksConsent,
     readOnly: p.readOnly,
@@ -42,8 +48,22 @@ export function registerPluginHandlers(deps: {
   mcpManager: McpManager;
   repo: ChatRepository;
   workspacesDir: string;
+  provider?: LLMProvider;
 }): void {
   const { pluginManager, mcpManager, repo, workspacesDir } = deps;
+
+  /**
+   * Claude Code agent files name their model by alias ("sonnet", "opus",
+   * "haiku", "inherit") or leave it out. Copied as-is those were routed to
+   * Ollama and 404'd, so use a real installed model instead.
+   */
+  async function resolveAgentModel(declared: string | undefined): Promise<string> {
+    const m = (declared ?? '').trim();
+    if (m && !/^(sonnet|opus|haiku|inherit|default)$/i.test(m)) return m;
+    const installed = deps.provider ? await deps.provider.listModels().catch(() => []) : [];
+    const local = installed.map((x) => x.name).find((n) => providerKindForModel(n) === 'ollama');
+    return local ?? repo.getAgent('agent-code-helper')?.model ?? 'qwen2.5-coder:14b';
+  }
 
   // Push plugin-contributed MCP servers into the manager's plugin layer.
   const syncMcp = (): void => {
@@ -54,8 +74,7 @@ export function registerPluginHandlers(deps: {
   // Re-sync MCP + broadcast plugin status whenever the plugin set changes.
   pluginManager.on('status', (plugins: InstalledPlugin[]) => {
     syncMcp();
-    const win = BrowserWindow.getAllWindows()[0];
-    win?.webContents.send(CHANNELS.PLUGINS_STATUS, { plugins: plugins.map(toDto) });
+    broadcast(CHANNELS.PLUGINS_STATUS, { plugins: plugins.map(toDto) });
   });
 
   ipcMain.handle(CHANNELS.PLUGINS_LIST, () => ({ plugins: pluginManager.list().map(toDto) }));
@@ -100,6 +119,27 @@ export function registerPluginHandlers(deps: {
     return { ok: true, plugin: toDto(installed) };
   });
 
+  // One box: owner/repo, git URL, folder, or .zip/.plugin/.skill file.
+  ipcMain.handle(CHANNELS.PLUGINS_INSTALL_FROM, async (_e, raw): Promise<PluginInstallFromResponse> => {
+    const { source } = schemas.pluginsInstallFromRequest.parse(raw);
+    try {
+      const r = await pluginManager.installFrom(source);
+      return { ok: true, ...r };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
+  ipcMain.handle(CHANNELS.PLUGINS_SKILL_SOURCES, (): { sources: PluginSkillSourceDto[] } => ({
+    sources: pluginManager.listSkillSources(),
+  }));
+
+  ipcMain.handle(CHANNELS.PLUGINS_SET_SKILL_SOURCE, async (_e, raw) => {
+    const { id, enabled } = schemas.pluginsSetSkillSourceRequest.parse(raw);
+    await pluginManager.setSkillSourceEnabled(id, enabled);
+    return { ok: true };
+  });
+
   ipcMain.handle(CHANNELS.PLUGINS_UNINSTALL, async (_e, raw) => {
     const { id } = schemas.pluginsIdRequest.parse(raw);
     await pluginManager.uninstall(id);
@@ -121,7 +161,12 @@ export function registerPluginHandlers(deps: {
   ipcMain.handle(CHANNELS.PLUGINS_LIST_SKILLS, () => {
     const skills: PluginSkillDto[] = pluginManager
       .skills()
-      .map((s) => ({ name: s.name, description: s.description, pluginId: s.pluginId }));
+      .map((s) => ({
+        name: s.name,
+        description: s.description,
+        pluginId: s.pluginId,
+        ...(s.source ? { source: s.source } : {}),
+      }));
     return { skills };
   });
 
@@ -154,7 +199,7 @@ export function registerPluginHandlers(deps: {
         description: def.description || `Imported from plugin ${id}`,
         specialtyTags: [],
         systemPrompt: def.body,
-        model: def.model ?? '',
+        model: await resolveAgentModel(def.model),
         avatarColor: '#a09a8e',
         workspacePath: wsPath,
         toolPerms: {

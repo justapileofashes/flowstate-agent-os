@@ -1,4 +1,4 @@
-import { ipcMain, shell } from 'electron';
+import { BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import { stat } from 'node:fs/promises';
 import { CHANNELS, schemas } from '@shared/ipc-channels';
 import { FileTools } from '@main/tools';
@@ -47,6 +47,31 @@ export function registerFileHandlers(): void {
       absolutePath.replace(/\\/g, '/').replace(/^([A-Za-z]):/, '$1:');
     await shell.openExternal(url);
     return { ok: true };
+  });
+
+  // Native pickers (window.prompt() isn't supported in Electron).
+  ipcMain.handle(CHANNELS.DIALOG_PICK_FOLDER, async (e, raw) => {
+    const { title, defaultPath } = schemas.dialogPickFolderRequest.parse(raw ?? {});
+    const win = BrowserWindow.fromWebContents(e.sender) ?? undefined;
+    const opts: Electron.OpenDialogOptions = {
+      title: title ?? 'Choose a folder',
+      properties: ['openDirectory', 'createDirectory'],
+      ...(defaultPath ? { defaultPath } : {}),
+    };
+    const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
+    return { path: res.canceled ? null : (res.filePaths[0] ?? null) };
+  });
+
+  ipcMain.handle(CHANNELS.DIALOG_PICK_FILE, async (e, raw) => {
+    const { title, filters } = schemas.dialogPickFileRequest.parse(raw ?? {});
+    const win = BrowserWindow.fromWebContents(e.sender) ?? undefined;
+    const opts: Electron.OpenDialogOptions = {
+      title: title ?? 'Choose a file',
+      properties: ['openFile'],
+      ...(filters ? { filters } : {}),
+    };
+    const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
+    return { path: res.canceled ? null : (res.filePaths[0] ?? null) };
   });
 
   ipcMain.handle(CHANNELS.SHELL_OPEN_URL, async (_e, raw) => {

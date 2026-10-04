@@ -108,10 +108,10 @@ function parseFrontmatter(raw: string): ParsedFrontmatter {
   const body = raw.slice(end + 4).replace(/^\r?\n/, '');
   const data: Record<string, unknown> = {};
   for (const line of block.split(/\r?\n/)) {
-    const m = /^([A-Za-z0-9_\-]+):\s*(.*)$/.exec(line);
+    const m = /^([A-Za-z0-9_-]+):\s*(.*)$/.exec(line);
     if (!m) continue;
     const k = m[1]!;
-    let v = (m[2] ?? '').trim();
+    const v = (m[2] ?? '').trim();
     if (v.startsWith('[') && v.endsWith(']')) {
       // Inline array
       const inner = v.slice(1, -1).trim();

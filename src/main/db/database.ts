@@ -3,27 +3,29 @@ import migration001 from './migrations/001_init.sql?raw';
 import migration002 from './migrations/002_chats.sql?raw';
 import migration003 from './migrations/003_agent_metadata.sql?raw';
 import migration004 from './migrations/004_agent_tool_perms.sql?raw';
-import migration005 from './migrations/005_license.sql?raw';
 import migration006 from './migrations/006_audit_log.sql?raw';
 import migration007 from './migrations/007_trading.sql?raw';
 import migration008 from './migrations/008_business_agent.sql?raw';
 import migration009 from './migrations/009_ai_trader.sql?raw';
+import migration010 from './migrations/010_drop_license_tokens.sql?raw';
 
 interface Migration {
   version: number;
   sql: string;
 }
 
+// Version 5 was a no-op (licensing, since removed). Gaps are fine: only
+// versions above MAX(schema_version) run.
 const MIGRATIONS: Migration[] = [
   { version: 1, sql: migration001 },
   { version: 2, sql: migration002 },
   { version: 3, sql: migration003 },
   { version: 4, sql: migration004 },
-  { version: 5, sql: migration005 },
   { version: 6, sql: migration006 },
   { version: 7, sql: migration007 },
   { version: 8, sql: migration008 },
   { version: 9, sql: migration009 },
+  { version: 10, sql: migration010 },
 ];
 
 const HELPER_PLACEHOLDER = '__WORKSPACE_PLACEHOLDER__';

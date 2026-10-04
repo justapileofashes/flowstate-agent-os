@@ -1,10 +1,11 @@
 // Full-setup backup. Bundles your agents + non-secret settings into one
 // portable JSON file so you can move to a new machine or restore after a wipe.
-// Secrets (API keys, license tokens) are DELIBERATELY excluded — a backup is a
+// Secrets (API keys, tokens) are DELIBERATELY excluded — a backup is a
 // shareable/cloud-stored artifact and must never carry credentials. Pure:
 // serialize/parse only; file IO + agent creation live in the IPC handler.
 
 import { z } from 'zod';
+import { toolPermsSchema } from '@shared/tool-groups';
 import { SECRET_SETTING_KEYS } from './settings-service';
 
 export const BACKUP_KIND = 'flowstate-backup';
@@ -18,7 +19,7 @@ const backupAgentSchema = z.object({
   systemPrompt: z.string(),
   model: z.string(),
   avatarColor: z.string(),
-  toolPerms: z.object({ shell_enabled: z.boolean(), delete_enabled: z.boolean() }),
+  toolPerms: toolPermsSchema,
   approvalPolicy: z.enum(['cautious', 'trusting', 'yolo']),
 });
 export type BackupAgent = z.infer<typeof backupAgentSchema>;
@@ -32,7 +33,8 @@ const backupSchema = z.object({
 });
 export type Backup = z.infer<typeof backupSchema>;
 
-/** Settings keys never written to a backup (secrets + machine-local cache). */
+/** Settings keys never written to a backup (secrets + machine-local cache).
+ *  `license.` covers tokens from old builds (migration 010 deletes them). */
 const EXCLUDED_SETTING_PREFIXES = ['license.', 'chat_model_override:', 'chat_workspace_override:'];
 
 function isExcludedSetting(key: string): boolean {

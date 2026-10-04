@@ -1,4 +1,5 @@
-import { ipcMain, BrowserWindow } from 'electron';
+import { ipcMain } from 'electron';
+import { broadcast } from '@main/util/broadcast';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { CHANNELS, schemas, teamEventChannel, teamEventEndChannel } from '@shared/ipc-channels';
@@ -6,9 +7,10 @@ import type { ChatRepository } from '@main/repos/chat-repository';
 import type { AgentSessionManager } from '@main/agent/agent-session-manager';
 import type { LLMProvider } from '@main/agent/llm-provider';
 import type { Orchestrator } from '@main/agent/orchestrator';
-import type { Coordinator, CoordinatorRunHandle } from '@main/agent/coordinator';
+import type { Coordinator, CoordinatorRunHandle, TeamEvent } from '@main/agent/coordinator';
 import type { AgentGenerator } from '@main/agent/agent-generator';
 import { generateAgentId } from '@main/util/agent-id';
+import { templateGroups } from '@main/agent-library';
 
 export interface ChatHandlerDeps {
   repo: ChatRepository;
@@ -96,7 +98,7 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
       model: spec.model,
       avatarColor: spec.avatarColor,
       workspacePath,
-      toolPerms: spec.toolPerms,
+      toolPerms: { ...spec.toolPerms, groups: templateGroups(spec.specialtyTags) },
       approvalPolicy: spec.approvalPolicy,
     });
     return { agent };
@@ -183,10 +185,7 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
 
   ipcMain.handle(CHANNELS.CHAT_TEAM_RUN, (_e, raw) => {
     const { text } = schemas.chatTeamRunRequest.parse(raw);
-    const send = (channel: string, payload: unknown): void => {
-      const win = BrowserWindow.getAllWindows()[0];
-      win?.webContents.send(channel, payload);
-    };
+    const send = broadcast;
     const { handle, done } = deps.coordinator.start(text, (event) => {
       send(teamEventChannel(handle.runId), event);
     });
@@ -249,49 +248,78 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
     if (team) {
       deps.repo.appendMessage(chat.id, { role: 'user', content: text });
 
-      // Run in background — route returns immediately.
+      // Run in background — route returns immediately. Every agent that is
+      // working is registered as an active stream on this chat, so the
+      // sidebar dot, the mascots and the chat's "team working" state are
+      // real (they used to be faked for 30 s whatever happened).
       void (async () => {
-        // Map taskId → agent name from the plan event so task-done can
-        // attribute correctly.
-        const taskAgents = new Map<string, string>();
+        const taskAgents = new Map<string, string>(); // taskId → agent name
+        const tracked = new Set<string>();
+        const track = (streamId: string, agentId: string): void => {
+          tracked.add(streamId);
+          deps.manager.trackExternal(streamId, agentId, chat.id, () => handle.abort());
+        };
+        const untrack = (streamId: string): void => {
+          tracked.delete(streamId);
+          deps.manager.untrackExternal(streamId);
+        };
         let synthesisBuffer = '';
-        const { done } = deps.coordinator.start(text, (event) => {
-          const e = event as { type?: string };
-          if (e.type === 'plan') {
-            const p = event as { plan: { tasks: Array<{ id: string; agentName: string }> } };
-            for (const t of p.plan.tasks) taskAgents.set(t.id, t.agentName);
-          } else if (e.type === 'task-done') {
-            const t = event as { taskId: string; output: string; ok: boolean };
-            const name = taskAgents.get(t.taskId) ?? 'agent';
-            const body = (t.output ?? '').trim();
-            if (body.length > 0) {
-              deps.repo.appendMessage(chat.id, {
-                role: 'assistant',
-                content: `**${name}** — ${body}`,
-              });
+        const { handle, done } = deps.coordinator.start(
+          text,
+          (event: TeamEvent) => {
+            switch (event.type) {
+              case 'plan':
+                untrack(`team-plan:${chat.id}`);
+                for (const t of event.plan.tasks) {
+                  taskAgents.set(t.id, t.agentName);
+                  track(`team:${t.id}`, t.agentId);
+                }
+                break;
+              case 'task-done': {
+                untrack(`team:${event.taskId}`);
+                const name = taskAgents.get(event.taskId) ?? 'agent';
+                const body = (event.output ?? '').trim();
+                if (body.length > 0) {
+                  deps.repo.appendMessage(chat.id, { role: 'assistant', content: `**${name}** — ${body}` });
+                } else if (!event.ok && event.error) {
+                  deps.repo.appendMessage(chat.id, { role: 'assistant', content: `**${name}** — _failed: ${event.error}_` });
+                }
+                break;
+              }
+              case 'synthesis-start':
+                track(`team-synth:${chat.id}`, event.agentId);
+                break;
+              case 'synthesis-text':
+                synthesisBuffer += event.delta ?? '';
+                break;
+              case 'run-end':
+                for (const id of [...tracked]) untrack(id);
+                if (event.reason === 'ok' && synthesisBuffer.trim().length > 0) {
+                  deps.repo.appendMessage(chat.id, { role: 'assistant', content: synthesisBuffer.trim() });
+                } else if (event.reason !== 'ok') {
+                  deps.repo.appendMessage(chat.id, {
+                    role: 'assistant',
+                    content: `_Team run ended: ${event.reason}${event.error ? ` — ${event.error}` : ''}._`,
+                  });
+                }
+                break;
+              default:
+                break;
             }
-          } else if (e.type === 'synthesis-text') {
-            const s = event as { delta?: string };
-            synthesisBuffer += s.delta ?? '';
-          } else if (e.type === 'run-end') {
-            const r = event as { reason: 'ok' | 'aborted' | 'error'; error?: string };
-            if (r.reason === 'ok' && synthesisBuffer.trim().length > 0) {
-              deps.repo.appendMessage(chat.id, {
-                role: 'assistant',
-                content: synthesisBuffer.trim(),
-              });
-            } else if (r.reason !== 'ok') {
-              deps.repo.appendMessage(chat.id, {
-                role: 'assistant',
-                content: `_Team run ended: ${r.reason}${r.error ? ` — ${r.error}` : ''}._`,
-              });
-            }
-          }
-        });
+          },
+          // The route chat already records the run; don't add a second chat.
+          { persist: false },
+        );
+        // Planning happens before any task agent is known: show the routed agent.
+        track(`team-plan:${chat.id}`, decision.agentId);
+        activeTeamRuns.set(handle.runId, handle);
         try {
           await done;
         } catch {
           // best-effort
+        } finally {
+          activeTeamRuns.delete(handle.runId);
+          for (const id of [...tracked]) untrack(id);
         }
       })();
     }

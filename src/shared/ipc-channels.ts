@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { toolPermsSchema } from './tool-groups';
 
 export const CHANNELS = {
   SETTINGS_GET: 'settings:get',
@@ -17,12 +18,28 @@ export const CHANNELS = {
   CHAT_LIST_MODELS: 'chat:list-models',
   CHAT_ACTIVE_STREAMS: 'chat:active-streams',
   CHAT_APPROVAL_RESPONSE: 'chat:approval-response',
+  /** Every tool-approval request, also for runs no chat view is watching
+   *  (team tasks, routines, schedules) — the app shell shows those. */
+  APPROVAL_REQUEST: 'approval:request',
+  APPROVAL_RESOLVED: 'approval:resolved',
   CHAT_ROUTE: 'chat:route',
   FILES_LIST: 'files:list',
   FILES_READ: 'files:read',
   SHELL_OPEN_PATH: 'shell:open-path',
   SHELL_OPEN_VSCODE: 'shell:open-vscode',
   SHELL_OPEN_URL: 'shell:open-url',
+  PREVIEW_REGISTER: 'preview:register',
+  DIALOG_PICK_FOLDER: 'dialog:pick-folder',
+  VOICE_TRANSCRIBE: 'voice:transcribe',
+  MODELS_STRENGTH: 'models:strength',
+  APP_GET_LOGIN_ITEM: 'app:get-login-item',
+  APP_SET_LOGIN_ITEM: 'app:set-login-item',
+  AGENTS_LIBRARY_LIST: 'agents:library-list',
+  AGENTS_LIBRARY_ADD: 'agents:library-add',
+  VOICE_GET_TRANSCRIBER: 'voice:get-transcriber',
+  VOICE_SAVE_TRANSCRIBER: 'voice:save-transcriber',
+  VOICE_TEST_TRANSCRIBER: 'voice:test-transcriber',
+  DIALOG_PICK_FILE: 'dialog:pick-file',
   CLOUD_TEST_CONNECTION: 'cloud:test-connection',
   OLLAMA_PULL: 'ollama:pull',
   OLLAMA_PULL_CANCEL: 'ollama:pull-cancel',
@@ -38,22 +55,18 @@ export const CHANNELS = {
   MCP_LIST: 'mcp:list',
   MCP_SAVE: 'mcp:save',
   MCP_TEST: 'mcp:test',
+  MCP_REGISTRY_SEARCH: 'mcp:registry-search',
   MCP_STATUS: 'mcp:status',
+  UPDATE_STATUS: 'update:status',
+  UPDATE_GET_STATUS: 'update:get-status',
+  UPDATE_CHECK: 'update:check',
+  UPDATE_INSTALL: 'update:install',
+  WEB_SEARCH_MCP_TOOLS: 'web-search:mcp-tools',
+  WEB_SEARCH_TEST: 'web-search:test',
   FLOWCLAW_LIST: 'flowclaw:list',
   FLOWCLAW_SAVE: 'flowclaw:save',
   FLOWCLAW_TEST: 'flowclaw:test',
   FLOWCLAW_REMOVE: 'flowclaw:remove',
-  ZOOM_SAVE_CREDS: 'zoom:save-creds',
-  ZOOM_TEST: 'zoom:test',
-  ZOOM_RECORD: 'zoom:record',
-  ZOOM_JOBS: 'zoom:jobs',
-  ZOOM_OPEN_RECORDING: 'zoom:open-recording',
-  CAPTURE_START: 'capture:start',
-  CAPTURE_CHUNK: 'capture:chunk',
-  CAPTURE_STOP: 'capture:stop',
-  CAPTURE_JOBS: 'capture:jobs',
-  CAPTURE_SAVE_TRANSCRIBER: 'capture:save-transcriber',
-  CAPTURE_TEST_TRANSCRIBER: 'capture:test-transcriber',
   // Business agent: one typed RPC channel (schemas in @shared/business/api).
   BUSINESS_RPC: 'business:rpc',
   BUSINESS_EVENT: 'business:event', // broadcast main → renderer
@@ -159,9 +172,13 @@ export const CHANNELS = {
   PLUGINS_SET_AGENT_SKILLS: 'plugins:set-agent-skills',
   PLUGINS_GET_AGENT_SKILLS: 'plugins:get-agent-skills',
   PLUGINS_IMPORT_AGENTS: 'plugins:import-agents',
+  PLUGINS_INSTALL_FROM: 'plugins:install-from',
+  PLUGINS_SKILL_SOURCES: 'plugins:skill-sources',
+  PLUGINS_SET_SKILL_SOURCE: 'plugins:set-skill-source',
   TERMINAL_START: 'terminal:start',
   TERMINAL_INPUT: 'terminal:input',
   TERMINAL_KILL: 'terminal:kill',
+  TERMINAL_RESIZE: 'terminal:resize',
   TERMINAL_DATA: 'terminal:data',
   TERMINAL_EXIT: 'terminal:exit',
 } as const;
@@ -189,10 +206,6 @@ const messageDtoSchema = z.object({
   createdAt: z.number(),
 });
 
-const toolPermsSchema = z.object({
-  shell_enabled: z.boolean(),
-  delete_enabled: z.boolean(),
-});
 
 const approvalPolicySchema = z.enum(['cautious', 'trusting', 'yolo']);
 
@@ -383,6 +396,18 @@ export const schemas = {
   shellOpenVscodeResponse: z.object({ ok: z.boolean() }),
   shellOpenUrlRequest: z.object({ url: z.string().url() }),
   shellOpenUrlResponse: z.object({ ok: z.boolean() }),
+  previewRegisterRequest: z.object({ html: z.string().max(10_000_000) }),
+  dialogPickFolderRequest: z.object({
+    title: z.string().max(200).optional(),
+    defaultPath: z.string().max(1000).optional(),
+  }),
+  dialogPickFileRequest: z.object({
+    title: z.string().max(200).optional(),
+    filters: z
+      .array(z.object({ name: z.string().max(80), extensions: z.array(z.string().max(20)).max(20) }))
+      .max(10)
+      .optional(),
+  }),
   cloudTestConnectionRequest: z.object({
     provider: z.enum(['anthropic', 'openai', 'gemini', 'perplexity', 'groq', 'mistral', 'xai']),
   }),
@@ -432,12 +457,17 @@ export const schemas = {
     ok: z.boolean(),
     output: z.string().default(''),
     error: z.string().optional(),
+    /** The ollama.com page opened in the browser to finish signing in. */
+    url: z.string().optional(),
+    alreadySignedIn: z.boolean().optional(),
   }),
   ollamaCloudStatusRequest: z.object({}),
   ollamaCloudStatusResponse: z.object({
     signedIn: z.boolean(),
     user: z.string().default(''),
     error: z.string().optional(),
+    note: z.string().optional(),
+    signinUrl: z.string().optional(),
   }),
   ollamaCloudSignoutRequest: z.object({}),
   ollamaCloudSignoutResponse: z.object({ ok: z.boolean(), error: z.string().optional() }),
@@ -605,6 +635,8 @@ export const schemas = {
     ),
   }),
   mcpSaveResponse: z.object({ ok: z.boolean() }),
+  mcpRegistrySearchRequest: z.object({ query: z.string().max(200).optional() }),
+  webSearchTestRequest: z.object({ query: z.string().trim().min(1).max(300).optional() }),
   mcpTestRequest: z.object({
     server: z.object({
       id: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,30}$/i),
@@ -635,17 +667,30 @@ export const schemas = {
   }),
   pluginsSetAgentSkillsRequest: z.object({
     agentId: z.string().trim().min(1).max(80),
-    names: z.array(z.string().max(80)).max(200),
+    /** null = no restriction (every enabled skill). */
+    names: z.array(z.string().max(120)).max(2000).nullable(),
   }),
   pluginsGetAgentSkillsRequest: z.object({ agentId: z.string().trim().min(1).max(80) }),
+  pluginsInstallFromRequest: z.object({ source: z.string().trim().min(1).max(1000) }),
+  pluginsSetSkillSourceRequest: z.object({
+    id: z.string().trim().min(1).max(40),
+    enabled: z.boolean(),
+  }),
 
   terminalStartRequest: z.object({
     id: z.string().trim().min(1).max(80),
     cwd: z.string().trim().min(1).max(1000),
+    cols: z.number().int().min(1).max(1000).optional(),
+    rows: z.number().int().min(1).max(1000).optional(),
   }),
   terminalInputRequest: z.object({
     id: z.string().trim().min(1).max(80),
-    data: z.string().max(10000),
+    data: z.string().max(100_000),
+  }),
+  terminalResizeRequest: z.object({
+    id: z.string().trim().min(1).max(80),
+    cols: z.number().int().min(1).max(1000),
+    rows: z.number().int().min(1).max(1000),
   }),
   terminalKillRequest: z.object({ id: z.string().trim().min(1).max(80) }),
 
@@ -685,36 +730,8 @@ export const schemas = {
   }),
   flowclawRemoveRequest: z.object({ id: z.string() }),
 
-  zoomSaveCredsRequest: z.object({
-    accountId: z.string().trim().min(1).max(120),
-    clientId: z.string().trim().min(1).max(120),
-    clientSecret: z.string().trim().min(1).max(300),
-  }),
-  zoomTestRequest: z.object({}),
-  zoomRecordRequest: z
-    .object({
-      meetingId: z.string().trim().min(1).max(40).optional(),
-      topic: z.string().trim().min(1).max(200).optional(),
-      agentId: z.string().min(1),
-      connectionId: z.string().min(1),
-      model: z.string().trim().max(120).optional(),
-    })
-    .refine((v) => !!v.meetingId || !!v.topic, {
-      message: 'meetingId or topic is required',
-    }),
-  zoomJobsRequest: z.object({}),
-  zoomOpenRecordingRequest: z.object({ path: z.string().min(1).max(500) }),
-
-  captureStartRequest: z.object({
-    title: z.string().trim().min(1).max(200),
-    agentId: z.string().min(1),
-    connectionId: z.string().min(1),
-    model: z.string().trim().max(120).optional(),
-  }),
-  // capture:chunk is NOT zod-validated — binary payload over structured clone;
-  // the handler checks the shape itself.
-  captureStopRequest: z.object({ captureId: z.string().min(1) }),
-  captureSaveTranscriberRequest: z.object({
+  agentsLibraryAddRequest: z.object({ id: z.string().min(1).max(80) }),
+  voiceSaveTranscriberRequest: z.object({
     mode: z.enum(['openai', 'cli']),
     url: z.string().trim().max(500).optional(),
     apiKey: z.string().trim().max(500).optional(),
@@ -878,14 +895,18 @@ export const schemas = {
   budgetSetCapsResponse: z.object({ ok: z.boolean() }),
 
   // --- @file mentions ---
-  mentionsResolveRequest: z.object({ agentId: z.string().min(1), text: z.string() }),
+  mentionsResolveRequest: z.object({
+    agentId: z.string().min(1),
+    text: z.string(),
+    chatId: z.string().min(1).optional(),
+  }),
   mentionsResolveResponse: z.object({
     paths: z.array(z.string()),
     contextBlock: z.string(),
   }),
 
   // --- Project conventions auto-context ---
-  projectContextLoadRequest: z.object({ agentId: z.string().min(1) }),
+  projectContextLoadRequest: z.object({ agentId: z.string().min(1), chatId: z.string().min(1).optional() }),
   projectContextLoadResponse: z.object({
     files: z.array(z.string()),
     preamble: z.string(),
@@ -1289,6 +1310,17 @@ export type ChatRenameChatResponse = z.infer<typeof schemas.chatRenameChatRespon
 export type ChatGenerateAgentRequest = z.infer<typeof schemas.chatGenerateAgentRequest>;
 export type ChatGenerateAgentResponse = z.infer<typeof schemas.chatGenerateAgentResponse>;
 
+/** Payload of CHANNELS.APPROVAL_REQUEST (every tool approval, any run). */
+export interface GlobalApprovalRequest {
+  streamId: string;
+  chatId: string;
+  agentId: string;
+  toolCallId: string;
+  toolName: string;
+  args: unknown;
+  cwd: string;
+}
+
 export interface OllamaPullProgress {
   status: string;
   total?: number;
@@ -1385,8 +1417,11 @@ export interface PluginDto {
   name: string;
   version: string;
   description: string;
-  origin: 'marketplace' | 'local' | 'claude-home';
+  origin: 'marketplace' | 'git' | 'local' | 'claude-home';
   marketplaceId?: string;
+  /** Where it came from: the repo / path it was installed from, or for
+   *  discovered plugins where the other tool got it (e.g. a marketplace). */
+  originSource?: string;
   enabled: boolean;
   hooksConsent: boolean;
   readOnly: boolean;
@@ -1412,6 +1447,27 @@ export interface PluginSkillDto {
   name: string;
   description: string;
   pluginId: string | null;
+  /** Standalone skills: the folder's owner, e.g. "Claude Code", "Codex CLI". */
+  source?: string;
+}
+
+/** What Plugins → "Install from…" did. */
+export interface PluginInstallFromResponse {
+  ok: boolean;
+  kind?: 'marketplace' | 'plugin' | 'skills';
+  id?: string;
+  name?: string;
+  skills?: number;
+  error?: string;
+}
+
+/** Another tool's skill folder, discovered read-only. */
+export interface PluginSkillSourceDto {
+  id: string;
+  label: string;
+  paths: string[];
+  count: number;
+  enabled: boolean;
 }
 
 export interface PluginsListResponse {
@@ -1438,6 +1494,41 @@ export interface TerminalDataBroadcast {
 export interface TerminalExitBroadcast {
   id: string;
   code: number | null;
+}
+
+/** Auto-update state (GitHub Releases), pushed on `update:status`. */
+export interface UpdateStatusDto {
+  state: 'idle' | 'disabled' | 'checking' | 'none' | 'downloading' | 'ready' | 'error';
+  /** Running version. */
+  current: string;
+  /** Version being downloaded / ready to install. */
+  version?: string;
+  percent?: number;
+  /** Why updates are off (portable exe, Store, dev). */
+  reason?: string;
+  /** Extra context for `none`, e.g. no release published yet. */
+  note?: string;
+  error?: string;
+}
+
+/** A tool on a connected MCP server that Settings → Web search can use. */
+export interface WebSearchMcpToolDto {
+  /** Full routed name: mcp__<serverId>__<tool>. */
+  name: string;
+  server: string;
+  tool: string;
+  description: string;
+  /** Name looks like search/crawl/browse — listed first. */
+  searchLike: boolean;
+}
+
+export interface WebSearchTestResponse {
+  ok: boolean;
+  provider: string;
+  count: number;
+  note?: string;
+  sample?: string;
+  error?: string;
 }
 
 /** Result of a transient connection test — spawn, initialize, list tools,
@@ -1481,73 +1572,30 @@ export interface FlowclawTestResultDto {
   error?: string;
 }
 
-// ── Zoom meeting recorder ────────────────────────────────────────────────────
+// ── Agent Library ───────────────────────────────────────────────────────────
 
-export type ZoomJobStatusDto =
-  | 'armed'
-  | 'waiting'
-  | 'downloading'
-  | 'summarizing'
-  | 'done'
-  | 'error';
-
-export interface ZoomJobDto {
+/** A built-in agent template, as the Library lists it. */
+export interface AgentTemplateDto {
   id: string;
-  meetingId: string;
-  topic: string;
-  agentId: string;
-  connectionId: string;
+  name: string;
+  description: string;
+  specialtyTags: string[];
+  avatarColor: string;
+  groups: string[];
+  /** Already one of the user's agents. */
+  added: boolean;
+}
+
+// ── Voice input (speech-to-text backend) ────────────────────────────────────
+
+/** Saved transcriber config as the renderer may see it — the API key never
+ *  crosses IPC, only whether one is stored. */
+export interface VoiceTranscriberDto {
+  mode: 'openai' | 'cli';
+  url?: string;
   model?: string;
-  status: ZoomJobStatusDto;
-  chatId?: string;
-  recordingFiles?: string[];
-  shareUrl?: string;
-  joinUrl?: string;
-  error?: string;
-  createdAt: number;
-  updatedAt: number;
-}
-
-export type ZoomRecordRequest = z.infer<typeof schemas.zoomRecordRequest>;
-export interface ZoomRecordResponse {
-  jobId: string;
-  joinUrl?: string;
-  error?: string;
-}
-export interface ZoomJobsResponse {
-  jobs: ZoomJobDto[];
-}
-
-// ── System-audio capture (webinar recorder) ─────────────────────────────────
-
-export type CaptureJobStatusDto =
-  | 'recording'
-  | 'transcribing'
-  | 'summarizing'
-  | 'done'
-  | 'error';
-
-export interface CaptureJobDto {
-  id: string;
-  title: string;
-  agentId: string;
-  connectionId: string;
-  model?: string;
-  status: CaptureJobStatusDto;
-  audioPath: string;
-  bytes: number;
-  chatId?: string;
-  error?: string;
-  createdAt: number;
-  updatedAt: number;
-}
-
-export type CaptureStartRequest = z.infer<typeof schemas.captureStartRequest>;
-export interface CaptureStartResponse {
-  captureId: string;
-}
-export interface CaptureJobsResponse {
-  jobs: CaptureJobDto[];
+  command?: string;
+  hasKey: boolean;
 }
 
 export interface AgentAutoAssignMatchDto {

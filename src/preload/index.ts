@@ -92,7 +92,12 @@ import type {
   ChatTeamNudgeResponse,
   TeamEventDto,
 } from '@shared/ipc-channels';
-import type { UsageSummaryResponse, BackupExportResponse, BackupImportResponse } from '@shared/ipc-channels';
+import type {
+  UsageSummaryResponse,
+  BackupExportResponse,
+  BackupImportResponse,
+  GlobalApprovalRequest,
+} from '@shared/ipc-channels';
 import type {
   FlowclawRunTaskResponse,
   FlowclawSkillsListResponse,
@@ -185,14 +190,14 @@ const api = {
     subscribeToStream: (
       streamId: string,
       onEvent: (event: unknown) => void,
-      onEnd: (payload: { reason: string }) => void,
+      onEnd: (payload: { reason: string; error?: string }) => void,
     ): (() => void) => {
       const evtChannel = chatEventChannel(streamId);
       const endChannel = chatEventEndChannel(streamId);
       const onEvtRaw = (_e: Electron.IpcRendererEvent, payload: unknown) => {
         onEvent(payload);
       };
-      const onEndRaw = (_e: Electron.IpcRendererEvent, payload: { reason: string }) => {
+      const onEndRaw = (_e: Electron.IpcRendererEvent, payload: { reason: string; error?: string }) => {
         onEnd(payload);
         ipcRenderer.removeListener(evtChannel, onEvtRaw);
         ipcRenderer.removeListener(endChannel, onEndRaw);
@@ -286,6 +291,14 @@ const api = {
       ipcRenderer.invoke(CHANNELS.MCP_SAVE, { servers }),
     test: (server: McpServerDto): Promise<McpTestResultDto> =>
       ipcRenderer.invoke(CHANNELS.MCP_TEST, { server }),
+    registrySearch: (
+      query: string,
+    ): Promise<{ entries: import('@shared/mcp-registry').RegistryEntryDto[]; error?: string }> =>
+      ipcRenderer.invoke(CHANNELS.MCP_REGISTRY_SEARCH, { query }),
+    webSearchTools: (): Promise<{ tools: import('@shared/ipc-channels').WebSearchMcpToolDto[] }> =>
+      ipcRenderer.invoke(CHANNELS.WEB_SEARCH_MCP_TOOLS, {}),
+    webSearchTest: (query?: string): Promise<import('@shared/ipc-channels').WebSearchTestResponse> =>
+      ipcRenderer.invoke(CHANNELS.WEB_SEARCH_TEST, query ? { query } : {}),
     subscribeStatus: (cb: (payload: McpStatusBroadcast) => void): (() => void) => {
       const handler = (_e: Electron.IpcRendererEvent, payload: McpStatusBroadcast): void =>
         cb(payload);
@@ -319,10 +332,16 @@ const api = {
       ipcRenderer.invoke(CHANNELS.PLUGINS_LIST_SKILLS, {}),
     getAgentSkills: (agentId: string): Promise<{ names: string[] | null }> =>
       ipcRenderer.invoke(CHANNELS.PLUGINS_GET_AGENT_SKILLS, { agentId }),
-    setAgentSkills: (agentId: string, names: string[]): Promise<{ ok: boolean }> =>
+    setAgentSkills: (agentId: string, names: string[] | null): Promise<{ ok: boolean }> =>
       ipcRenderer.invoke(CHANNELS.PLUGINS_SET_AGENT_SKILLS, { agentId, names }),
     importAgents: (id: string): Promise<{ ok: boolean; count: number }> =>
       ipcRenderer.invoke(CHANNELS.PLUGINS_IMPORT_AGENTS, { id }),
+    installFrom: (source: string): Promise<import('@shared/ipc-channels').PluginInstallFromResponse> =>
+      ipcRenderer.invoke(CHANNELS.PLUGINS_INSTALL_FROM, { source }),
+    skillSources: (): Promise<{ sources: import('@shared/ipc-channels').PluginSkillSourceDto[] }> =>
+      ipcRenderer.invoke(CHANNELS.PLUGINS_SKILL_SOURCES, {}),
+    setSkillSource: (id: string, enabled: boolean): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke(CHANNELS.PLUGINS_SET_SKILL_SOURCE, { id, enabled }),
     subscribeStatus: (cb: (payload: PluginsStatusBroadcast) => void): (() => void) => {
       const handler = (_e: Electron.IpcRendererEvent, payload: PluginsStatusBroadcast): void =>
         cb(payload);
@@ -330,11 +349,46 @@ const api = {
       return () => ipcRenderer.removeListener(CHANNELS.PLUGINS_STATUS, handler);
     },
   },
+  updates: {
+    status: (): Promise<import('@shared/ipc-channels').UpdateStatusDto> =>
+      ipcRenderer.invoke(CHANNELS.UPDATE_GET_STATUS, {}),
+    check: (): Promise<import('@shared/ipc-channels').UpdateStatusDto> =>
+      ipcRenderer.invoke(CHANNELS.UPDATE_CHECK, {}),
+    install: (): Promise<{ ok: boolean }> => ipcRenderer.invoke(CHANNELS.UPDATE_INSTALL, {}),
+    onStatus: (cb: (payload: import('@shared/ipc-channels').UpdateStatusDto) => void): (() => void) => {
+      const handler = (
+        _e: Electron.IpcRendererEvent,
+        payload: import('@shared/ipc-channels').UpdateStatusDto,
+      ): void => cb(payload);
+      ipcRenderer.on(CHANNELS.UPDATE_STATUS, handler);
+      return () => ipcRenderer.removeListener(CHANNELS.UPDATE_STATUS, handler);
+    },
+  },
+  approvals: {
+    /** Tool approvals from any run, including background ones no chat view watches. */
+    onRequest: (cb: (payload: GlobalApprovalRequest) => void): (() => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, payload: GlobalApprovalRequest): void => cb(payload);
+      ipcRenderer.on(CHANNELS.APPROVAL_REQUEST, handler);
+      return () => ipcRenderer.removeListener(CHANNELS.APPROVAL_REQUEST, handler);
+    },
+    onResolved: (cb: (payload: { streamId: string; toolCallId: string }) => void): (() => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, payload: { streamId: string; toolCallId: string }): void =>
+        cb(payload);
+      ipcRenderer.on(CHANNELS.APPROVAL_RESOLVED, handler);
+      return () => ipcRenderer.removeListener(CHANNELS.APPROVAL_RESOLVED, handler);
+    },
+  },
   terminal: {
-    start: (id: string, cwd: string): Promise<{ ok: boolean }> =>
-      ipcRenderer.invoke(CHANNELS.TERMINAL_START, { id, cwd }),
+    start: (
+      id: string,
+      cwd: string,
+      size?: { cols: number; rows: number },
+    ): Promise<{ ok: boolean; pty: boolean }> =>
+      ipcRenderer.invoke(CHANNELS.TERMINAL_START, { id, cwd, ...(size ?? {}) }),
     input: (id: string, data: string): Promise<{ ok: boolean }> =>
       ipcRenderer.invoke(CHANNELS.TERMINAL_INPUT, { id, data }),
+    resize: (id: string, cols: number, rows: number): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke(CHANNELS.TERMINAL_RESIZE, { id, cols, rows }),
     kill: (id: string): Promise<{ ok: boolean }> =>
       ipcRenderer.invoke(CHANNELS.TERMINAL_KILL, { id }),
     onData: (cb: (payload: TerminalDataBroadcast) => void): (() => void) => {
@@ -456,7 +510,8 @@ const api = {
       ipcRenderer.invoke(CHANNELS.SYSTEM_STATS_GET, {}),
   },
   clis: {
-    detect: (): Promise<ClisDetectResponse> => ipcRenderer.invoke(CHANNELS.CLIS_DETECT, {}),
+    detect: (force = false): Promise<ClisDetectResponse> =>
+      ipcRenderer.invoke(CHANNELS.CLIS_DETECT, { force }),
     get: (): Promise<ClisGetResponse> => ipcRenderer.invoke(CHANNELS.CLIS_GET, {}),
     connect: (ids: string[]): Promise<{ ok: true }> =>
       ipcRenderer.invoke(CHANNELS.CLIS_CONNECT, { ids }),
@@ -486,10 +541,10 @@ const api = {
       ipcRenderer.invoke(CHANNELS.BUDGET_GET_CAPS, {}),
     setBudgetCaps: (perChatUsd: number, perDayUsd: number): Promise<{ ok: boolean }> =>
       ipcRenderer.invoke(CHANNELS.BUDGET_SET_CAPS, { perChatUsd, perDayUsd }),
-    resolveMentions: (agentId: string, text: string): Promise<MentionsResolveResponse> =>
-      ipcRenderer.invoke(CHANNELS.MENTIONS_RESOLVE, { agentId, text }),
-    loadProjectContext: (agentId: string): Promise<ProjectContextLoadResponse> =>
-      ipcRenderer.invoke(CHANNELS.PROJECT_CONTEXT_LOAD, { agentId }),
+    resolveMentions: (agentId: string, text: string, chatId?: string): Promise<MentionsResolveResponse> =>
+      ipcRenderer.invoke(CHANNELS.MENTIONS_RESOLVE, { agentId, text, ...(chatId ? { chatId } : {}) }),
+    loadProjectContext: (agentId: string, chatId?: string): Promise<ProjectContextLoadResponse> =>
+      ipcRenderer.invoke(CHANNELS.PROJECT_CONTEXT_LOAD, { agentId, ...(chatId ? { chatId } : {}) }),
     preflight: (
       text: string,
       contextChars?: number,
@@ -519,6 +574,42 @@ const api = {
       ipcRenderer.invoke(CHANNELS.SHELL_OPEN_VSCODE, { absolutePath }),
     url: (url: string): Promise<{ ok: boolean }> =>
       ipcRenderer.invoke(CHANNELS.SHELL_OPEN_URL, { url }),
+  },
+  preview: {
+    register: (html: string): Promise<{ url: string }> =>
+      ipcRenderer.invoke(CHANNELS.PREVIEW_REGISTER, { html }),
+  },
+  modelStrength: (models?: string[]) => ipcRenderer.invoke(CHANNELS.MODELS_STRENGTH, { models }),
+  loginItem: {
+    get: () => ipcRenderer.invoke(CHANNELS.APP_GET_LOGIN_ITEM, {}),
+    set: (enabled: boolean) => ipcRenderer.invoke(CHANNELS.APP_SET_LOGIN_ITEM, { enabled }),
+  },
+  agentLibrary: {
+    list: () => ipcRenderer.invoke(CHANNELS.AGENTS_LIBRARY_LIST, {}),
+    add: (id: string) => ipcRenderer.invoke(CHANNELS.AGENTS_LIBRARY_ADD, { id }),
+  },
+  voice: {
+    transcribe: (
+      data: ArrayBuffer,
+      mime: string,
+    ): Promise<{ text?: string; error?: string; notConfigured?: boolean }> =>
+      ipcRenderer.invoke(CHANNELS.VOICE_TRANSCRIBE, { data, mime }),
+    getTranscriber: () => ipcRenderer.invoke(CHANNELS.VOICE_GET_TRANSCRIBER, {}),
+    saveTranscriber: (cfg: {
+      mode: 'openai' | 'cli';
+      url?: string;
+      apiKey?: string;
+      model?: string;
+      command?: string;
+    }) => ipcRenderer.invoke(CHANNELS.VOICE_SAVE_TRANSCRIBER, cfg),
+    testTranscriber: () => ipcRenderer.invoke(CHANNELS.VOICE_TEST_TRANSCRIBER, {}),
+  },
+  dialogs: {
+    pickFolder: (opts: { title?: string; defaultPath?: string } = {}): Promise<{ path: string | null }> =>
+      ipcRenderer.invoke(CHANNELS.DIALOG_PICK_FOLDER, opts),
+    pickFile: (
+      opts: { title?: string; filters?: Array<{ name: string; extensions: string[] }> } = {},
+    ): Promise<{ path: string | null }> => ipcRenderer.invoke(CHANNELS.DIALOG_PICK_FILE, opts),
   },
   cloud: {
     test: (
@@ -568,37 +659,13 @@ const api = {
     toggle: (id: string, enabled: boolean) =>
       ipcRenderer.invoke(CHANNELS.ROUTINES_TOGGLE, { id, enabled }),
     runNow: (id: string) => ipcRenderer.invoke(CHANNELS.ROUTINES_RUN_NOW, { id }),
-  },
-  zoom: {
-    saveCreds: (creds: { accountId: string; clientId: string; clientSecret: string }) =>
-      ipcRenderer.invoke(CHANNELS.ZOOM_SAVE_CREDS, creds),
-    test: () => ipcRenderer.invoke(CHANNELS.ZOOM_TEST, {}),
-    record: (req: {
-      meetingId?: string;
-      topic?: string;
-      agentId: string;
-      connectionId: string;
-      model?: string;
-    }) => ipcRenderer.invoke(CHANNELS.ZOOM_RECORD, req),
-    jobs: () => ipcRenderer.invoke(CHANNELS.ZOOM_JOBS, {}),
-    openRecording: (path: string) => ipcRenderer.invoke(CHANNELS.ZOOM_OPEN_RECORDING, { path }),
-  },
-  capture: {
-    start: (req: { title: string; agentId: string; connectionId: string; model?: string }) =>
-      ipcRenderer.invoke(CHANNELS.CAPTURE_START, req),
-    // Structured clone carries the ArrayBuffer to main intact.
-    chunk: (captureId: string, data: ArrayBuffer) =>
-      ipcRenderer.invoke(CHANNELS.CAPTURE_CHUNK, { captureId, data }),
-    stop: (captureId: string) => ipcRenderer.invoke(CHANNELS.CAPTURE_STOP, { captureId }),
-    jobs: () => ipcRenderer.invoke(CHANNELS.CAPTURE_JOBS, {}),
-    saveTranscriber: (cfg: {
-      mode: 'openai' | 'cli';
-      url?: string;
-      apiKey?: string;
-      model?: string;
-      command?: string;
-    }) => ipcRenderer.invoke(CHANNELS.CAPTURE_SAVE_TRANSCRIBER, cfg),
-    testTranscriber: () => ipcRenderer.invoke(CHANNELS.CAPTURE_TEST_TRANSCRIBER, {}),
+    /** A routine ran (possibly in the background) and opened a new chat. */
+    onFired: (cb: (payload: { id: string; chatId: string }) => void): (() => void) => {
+      const handler = (_e: Electron.IpcRendererEvent, payload: { id: string; chatId: string }): void =>
+        cb(payload);
+      ipcRenderer.on('routines:fired', handler);
+      return () => ipcRenderer.removeListener('routines:fired', handler);
+    },
   },
   business: {
     rpc: (method: string, params?: unknown) => ipcRenderer.invoke(CHANNELS.BUSINESS_RPC, { method, params: params ?? {} }),

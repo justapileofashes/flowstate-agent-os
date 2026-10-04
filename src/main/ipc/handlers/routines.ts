@@ -4,7 +4,7 @@
 // due routines, spins up a fresh chat per fire, and runs the agent with the
 // saved prompt. Persisted to userData/routines.json.
 
-import { app, ipcMain, BrowserWindow } from 'electron';
+import { app, ipcMain } from 'electron';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -17,6 +17,7 @@ import { SecretStore, electronSafeStorageBackend } from '@main/services/secret-s
 import { SettingsConnectionStore } from '@main/services/flowclaw-store';
 import { FlowclawConnections } from '@main/agent/flowclaw-connections';
 import { nextCron } from '@main/util/cron';
+import { broadcast } from '@main/util/broadcast';
 
 // ── Schedule math ───────────────────────────────────────────────────────────
 
@@ -193,6 +194,14 @@ class RoutineStore {
     this.persist();
   }
 
+  /** Move a routine to its next slot without counting a run (it failed). */
+  advance(id: string): void {
+    const r = this.items.find((x) => x.id === id);
+    if (!r) return;
+    r.nextRunAt = computeNextRun(r.schedule, Date.now());
+    this.persist();
+  }
+
   get(id: string): RoutineDto | undefined {
     return this.items.find((x) => x.id === id);
   }
@@ -217,17 +226,22 @@ export function registerRoutineHandlers(deps: {
     new SettingsConnectionStore(deps.settings, new SecretStore(electronSafeStorageBackend())),
   );
 
+  // Routines whose run is still in progress: a gateway run can outlast the
+  // 30 s tick, and firing again would start a duplicate.
+  const inFlight = new Set<string>();
+
   async function fire(routine: RoutineDto): Promise<string | null> {
+    if (inFlight.has(routine.id)) return null;
+    inFlight.add(routine.id);
     try {
       const chat = deps.repo.createChat(
         routine.agentId,
         `${routine.name} · ${new Date().toLocaleString()}`,
       );
-      // Persist the prompt as the user message so the run reads naturally.
-      deps.repo.appendMessage(chat.id, { role: 'user', content: routine.prompt });
 
       if (routine.target?.kind === 'flowclaw') {
         // Run on a gateway connection (Hermes/OpenClaw) and persist the result.
+        deps.repo.appendMessage(chat.id, { role: 'user', content: routine.prompt });
         const text = await flowclaw.runToText(routine.target.connectionId, routine.prompt, {
           ...(routine.target.model ? { model: routine.target.model } : {}),
         });
@@ -236,17 +250,22 @@ export function registerRoutineHandlers(deps: {
           content: text || '[no output]',
         });
       } else {
+        // session.run persists the prompt as the user message itself; adding
+        // it here too made every routine chat start with the prompt twice.
         const { session } = await deps.manager.start(chat.id);
         void session.run(routine.prompt);
       }
 
       store!.markRan(routine.id, chat.id);
-      // Nudge any open window to refresh its recent-chats list.
-      const win = BrowserWindow.getAllWindows()[0];
-      win?.webContents.send('routines:fired', { id: routine.id, chatId: chat.id });
+      // Nudge open windows to refresh their recent-chats list.
+      broadcast('routines:fired', { id: routine.id, chatId: chat.id });
       return chat.id;
     } catch {
+      // Still move on to the next slot, or the ticker retries every 30 s forever.
+      store!.advance(routine.id);
       return null;
+    } finally {
+      inFlight.delete(routine.id);
     }
   }
 
@@ -293,10 +312,10 @@ export function registerRoutineHandlers(deps: {
   // Tick every 30s. Routines are minute-granular, so 30s guarantees we
   // never miss a minute boundary.
   if (ticker) clearInterval(ticker);
-  ticker = setInterval(async () => {
+  ticker = setInterval(() => {
     if (!store) return;
-    for (const r of store.due(Date.now())) {
-      await fire(r);
-    }
+    // In parallel: a slow gateway routine must not hold up the others.
+    // fire() skips routines that are still running.
+    for (const r of store.due(Date.now())) void fire(r);
   }, 30_000);
 }

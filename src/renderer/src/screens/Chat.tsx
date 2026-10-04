@@ -13,6 +13,8 @@ import { TerminalPanel } from '../chat/TerminalPanel';
 import { SnapshotsButton } from '../chat/SnapshotsButton';
 import { AuditButton } from '../chat/AuditButton';
 import { ExportRunButton } from '../chat/ExportRunButton';
+import { AgentFormModal } from '../chat/AgentFormModal';
+import { DeleteAgentModal } from '../chat/DeleteAgentModal';
 import type { NavTarget } from '../chat/slash-commands';
 import { AgentAvatar } from '../lib/agent-icons';
 import type { TokenUsage } from '../chat/useChatStream';
@@ -89,14 +91,37 @@ interface Props {
   pendingChat?: PendingChat | null;
   onChatActivity?: () => void;
   onNav?: (target: NavTarget) => void;
+  /** Every live stream in the app (chats, routines, team-run tasks). */
+  activeStreams?: Array<{ streamId: string; agentId: string; chatId: string }>;
+  /** Enable "Edit agent"; called with the saved agent. */
+  onAgentSaved?: (agent: AgentDto) => void;
+  /** Enable "Delete agent"; called after it's gone. */
+  onAgentDeleted?: () => void;
 }
 
-export function Chat({ agent, openChatId, pendingChat, onChatActivity, onNav }: Props): JSX.Element {
+export function Chat({
+  agent,
+  openChatId,
+  pendingChat,
+  onChatActivity,
+  onNav,
+  activeStreams,
+  onAgentSaved,
+  onAgentDeleted,
+}: Props): JSX.Element {
+  const [agentModal, setAgentModal] = useState<'edit' | 'delete' | null>(null);
   const [activeChatId, setActiveChatId] = useState<string | null>(openChatId ?? null);
   const [filesOpen, setFilesOpen] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [openViews, setOpenViews] = useState<Set<ChatView>>(new Set());
   const stream = useChatStream(activeChatId);
+  // Work on this chat that this view didn't start: a team run from the Ask
+  // box, or a routine. Its replies arrive via the message poll.
+  const backgroundStreams =
+    stream.status === 'streaming' || !activeChatId
+      ? []
+      : (activeStreams ?? []).filter((s) => s.chatId === activeChatId);
+  const backgroundBusy = backgroundStreams.length > 0;
   // Track which pendingChat id we've already auto-sent for, so effect
   // re-runs (after onConsumed clears the prop) don't re-fire.
   const handledPendingRef = useRef<string | null>(null);
@@ -134,16 +159,24 @@ export function Chat({ agent, openChatId, pendingChat, onChatActivity, onNav }: 
     await ipc.settings.set(`chat_model_override:${activeChatId}`, next);
   }
 
+  // window.prompt() is not supported in Electron (it returned null, so this
+  // button silently did nothing); use the native folder picker.
   async function changeWorkspace(): Promise<void> {
     if (!activeChatId) return;
-    const next = prompt(
-      'Workspace path for this session (leave empty to use agent default):',
-      wsOverride || agent.workspacePath,
-    );
-    if (next === null) return;
+    const { path } = await ipc.dialogs.pickFolder({
+      title: 'Workspace for this session',
+      defaultPath: wsOverride || agent.workspacePath,
+    });
+    if (!path) return;
+    await setWorkspace(path === agent.workspacePath ? '' : path);
+  }
+
+  async function setWorkspace(next: string): Promise<void> {
+    if (!activeChatId) return;
     setWsOverride(next);
     await ipc.settings.set(`chat_workspace_override:${activeChatId}`, next);
   }
+  const effectiveWorkspace = wsOverride || agent.workspacePath;
 
   useEffect(() => {
     if (openChatId && openChatId !== activeChatId) {
@@ -290,11 +323,31 @@ export function Chat({ agent, openChatId, pendingChat, onChatActivity, onNav }: 
                 >
                   {wsOverride ? 'workspace·custom' : 'workspace'}
                 </button>
+                {wsOverride ? (
+                  <button
+                    type="button"
+                    onClick={() => void setWorkspace('')}
+                    title={`Back to the agent's workspace (${agent.workspacePath})`}
+                    style={{
+                      background: 'transparent',
+                      border: 0,
+                      color: 'var(--ink-faint)',
+                      fontSize: 11,
+                      cursor: 'pointer',
+                      padding: 0,
+                    }}
+                  >
+                    ×
+                  </button>
+                ) : null}
                 <span>· {agent.specialtyTags.join(' · ') || 'plan'}</span>
               </div>
             ) : null}
           </div>
-          <StatusChip pending={!!stream.pendingApproval} status={stream.status} />
+          <StatusChip
+            pending={!!stream.pendingApproval}
+            status={backgroundBusy ? 'streaming' : stream.status}
+          />
         </div>
         <div className="right">
           {headerPrefs.tokenChip ? <TokenChip tokens={stream.tokens} cap={cap} /> : null}
@@ -364,8 +417,51 @@ export function Chat({ agent, openChatId, pendingChat, onChatActivity, onNav }: 
             </svg>
             <span>New</span>
           </button>
+          {onAgentSaved ? (
+            <button
+              type="button"
+              title="Edit this agent (name, prompt, model, tools, skills)"
+              className="btn btn-sm btn-ghost"
+              onClick={() => setAgentModal('edit')}
+            >
+              <span>Edit agent</span>
+            </button>
+          ) : null}
+          {onAgentDeleted ? (
+            <button
+              type="button"
+              title="Delete this agent"
+              className="btn btn-sm btn-ghost"
+              onClick={() => setAgentModal('delete')}
+            >
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                <path d="M2.5 3.5h7 M4.5 3.5V2.5h3v1 M3.5 3.5l.5 6h4l.5-6" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </button>
+          ) : null}
         </div>
       </header>
+      {agentModal === 'edit' && onAgentSaved ? (
+        <AgentFormModal
+          mode="edit"
+          initial={agent}
+          onClose={() => setAgentModal(null)}
+          onSaved={(a) => {
+            setAgentModal(null);
+            onAgentSaved(a);
+          }}
+        />
+      ) : null}
+      {agentModal === 'delete' && onAgentDeleted ? (
+        <DeleteAgentModal
+          agent={agent}
+          onClose={() => setAgentModal(null)}
+          onDeleted={() => {
+            setAgentModal(null);
+            onAgentDeleted();
+          }}
+        />
+      ) : null}
 
       {activeChatId === null ? (
         <EmptyChatState onCreate={() => void handleNewChat()} />
@@ -376,13 +472,22 @@ export function Chat({ agent, openChatId, pendingChat, onChatActivity, onNav }: 
               messages={stream.messages}
               streaming={stream.streamingAssistant}
               agent={agent}
+              error={stream.status === 'error' ? stream.error : null}
+              backgroundWorkers={backgroundBusy ? backgroundStreams.length : 0}
             />
             <Composer
               disabled={false}
-              streaming={stream.status === 'streaming'}
+              streaming={stream.status === 'streaming' || backgroundBusy}
               onSend={(text) => void handleSend(text)}
-              onStop={stream.abort}
+              onStop={
+                backgroundBusy
+                  ? () => {
+                      for (const s of backgroundStreams) void ipc.chat.abort(s.streamId);
+                    }
+                  : stream.abort
+              }
               agent={agent}
+              workspacePath={effectiveWorkspace}
               {...(activeChatId ? { chatId: activeChatId } : {})}
               {...(onNav ? { onNav } : {})}
             />
@@ -397,7 +502,7 @@ export function Chat({ agent, openChatId, pendingChat, onChatActivity, onNav }: 
             </div>
           ))}
           {filesOpen ? (
-            <FileBrowser workspacePath={agent.workspacePath} onClose={() => setFilesOpen(false)} />
+            <FileBrowser workspacePath={effectiveWorkspace} onClose={() => setFilesOpen(false)} />
           ) : null}
           {terminalOpen && activeChatId ? (
             <div
@@ -406,7 +511,7 @@ export function Chat({ agent, openChatId, pendingChat, onChatActivity, onNav }: 
             >
               <TerminalPanel
                 id={`term-${activeChatId}`}
-                cwd={agent.workspacePath}
+                cwd={effectiveWorkspace}
                 onClose={() => setTerminalOpen(false)}
               />
             </div>

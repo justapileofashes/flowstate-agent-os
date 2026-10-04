@@ -65,7 +65,6 @@ export class SecretStore {
   decryptValue(value: string): string {
     if (!this.isEncrypted(value)) return value;
     if (!this.backend.isAvailable()) {
-      // eslint-disable-next-line no-console
       console.warn('[secrets] encrypted value found but keychain unavailable — dropping it');
       return '';
     }
@@ -73,7 +72,6 @@ export class SecretStore {
       const buf = Buffer.from(value.slice(ENC_PREFIX.length), 'base64');
       return this.backend.decrypt(buf);
     } catch {
-      // eslint-disable-next-line no-console
       console.warn('[secrets] failed to decrypt a value — dropping it');
       return '';
     }

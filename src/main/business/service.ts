@@ -339,7 +339,8 @@ export class BusinessAgentService {
     return c;
   }
 
-  private async dispatch(method: BizMethod, p: any): Promise<unknown> {  
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- RPC params, validated per method
+  private async dispatch(method: BizMethod, p: any): Promise<unknown> {
     const db = this.db;
     switch (method) {
       case 'status':

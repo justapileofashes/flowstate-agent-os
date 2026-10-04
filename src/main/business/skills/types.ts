@@ -60,6 +60,7 @@ export interface RuleProposal {
 
 export type Precondition = { ok: true } | { ok: false; reason: string };
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- heterogeneous skill registries hold Skill<any>
 export interface Skill<A = any> {
   key: string;
   /** Name the LLM calls (provider-safe: [a-zA-Z0-9_-]). */

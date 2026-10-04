@@ -1,5 +1,28 @@
 import { describe, it, expect } from 'vitest';
 import { ApprovalGate } from '@main/agent/approval-gate';
+import { CHANNELS } from '@shared/ipc-channels';
+
+describe('ApprovalGate — background runs', () => {
+  it('also broadcasts requests + resolutions on the global approval channels', async () => {
+    const events: Array<{ channel: string; payload: unknown }> = [];
+    const gate = new ApprovalGate((channel, payload) => events.push({ channel, payload }), 1000);
+    const p = gate.require({
+      streamId: 'team:t1',
+      chatId: 'team:t1',
+      agent: { id: 'a1', approvalPolicy: 'cautious', toolPerms: { shell_enabled: true, delete_enabled: true } },
+      toolCallId: 'c1',
+      toolName: 'run_shell',
+      args: { command: 'ls' },
+      cwd: '/w',
+      isOverwrite: false,
+    });
+    const req = events.find((e) => e.channel === CHANNELS.APPROVAL_REQUEST);
+    expect(req?.payload).toMatchObject({ streamId: 'team:t1', toolCallId: 'c1', agentId: 'a1', toolName: 'run_shell' });
+    expect(gate.resolve('team:t1', 'c1', 'allow-once')).toBe(true);
+    await expect(p).resolves.toBe('allow');
+    expect(events.some((e) => e.channel === CHANNELS.APPROVAL_RESOLVED)).toBe(true);
+  });
+});
 
 const fakeAgent = {
   id: 'a1',
@@ -26,6 +49,7 @@ describe('ApprovalGate.shouldPrompt — cautious', () => {
     expect(gate.shouldPrompt('cautious', 'delete_file', { path: 'a' }, false)).toBe(true);
     expect(gate.shouldPrompt('cautious', 'write_file', { path: 'new' }, false)).toBe(false);
     expect(gate.shouldPrompt('cautious', 'write_file', { path: 'old' }, true)).toBe(true);
+    expect(gate.shouldPrompt('cautious', 'edit_file', { path: 'old' }, false)).toBe(true);
     expect(gate.shouldPrompt('cautious', 'read_file', { path: 'a' }, false)).toBe(false);
   });
 });
@@ -36,6 +60,7 @@ describe('ApprovalGate.shouldPrompt — trusting', () => {
     expect(gate.shouldPrompt('trusting', 'run_shell', {}, false)).toBe(true);
     expect(gate.shouldPrompt('trusting', 'delete_file', {}, false)).toBe(true);
     expect(gate.shouldPrompt('trusting', 'write_file', {}, true)).toBe(false);
+    expect(gate.shouldPrompt('trusting', 'edit_file', {}, false)).toBe(false);
   });
 });
 
@@ -44,6 +69,66 @@ describe('ApprovalGate.shouldPrompt — yolo', () => {
     const gate = new ApprovalGate(() => {}, 1000);
     expect(gate.shouldPrompt('yolo', 'run_shell', {}, false)).toBe(false);
     expect(gate.shouldPrompt('yolo', 'delete_file', {}, false)).toBe(false);
+  });
+});
+
+describe('ApprovalGate.shouldPrompt — run_code', () => {
+  it('always prompts for run_code (host JS exec, not a sandbox)', () => {
+    const gate = new ApprovalGate(() => {}, 1000);
+    expect(gate.shouldPrompt('cautious', 'run_code', { source: '1' }, false)).toBe(true);
+    expect(gate.shouldPrompt('trusting', 'run_code', { source: '1' }, false)).toBe(true);
+    expect(gate.shouldPrompt('yolo', 'run_code', { source: '1' }, false)).toBe(false);
+  });
+});
+
+describe('ApprovalGate.shouldPrompt — MCP tools', () => {
+  it('prompts for MCP tools (external actions) unless the agent is yolo', () => {
+    const gate = new ApprovalGate(() => {}, 1000);
+    expect(gate.shouldPrompt('cautious', 'mcp__srv__do', {}, false)).toBe(true);
+    expect(gate.shouldPrompt('trusting', 'mcp__srv__do', {}, false)).toBe(true);
+    expect(gate.shouldPrompt('yolo', 'mcp__srv__do', {}, false)).toBe(false);
+  });
+});
+
+describe('ApprovalGate.require — abort signal', () => {
+  const req = (signal: AbortSignal) => ({
+    streamId: 's1',
+    chatId: 'c1',
+    agent: fakeAgent,
+    toolCallId: 't1',
+    toolName: 'run_shell',
+    args: { command: 'ls' },
+    cwd: '/tmp/ws',
+    isOverwrite: false,
+    signal,
+  });
+
+  // Long auto-deny so only the abort (not the timeout) can settle these quickly.
+  const slowGate = () => {
+    const events: Array<{ channel: string; payload: unknown }> = [];
+    const gate = new ApprovalGate((channel, payload) => events.push({ channel, payload }), 60_000);
+    return { gate, events };
+  };
+  const within200ms = <T,>(p: Promise<T>) =>
+    Promise.race([p, new Promise<'still-pending'>((r) => setTimeout(() => r('still-pending'), 200))]);
+
+  it('denies at once, without prompting, when the run is already stopped', async () => {
+    const { gate, events } = slowGate();
+    const ac = new AbortController();
+    ac.abort();
+    expect(await within200ms(gate.require(req(ac.signal)))).toBe('deny');
+    expect(events.some((e) => e.channel === CHANNELS.APPROVAL_REQUEST)).toBe(false);
+  });
+
+  it('Stop while waiting denies the pending approval and a late Allow is a no-op', async () => {
+    const { gate, events } = slowGate();
+    const ac = new AbortController();
+    const p = gate.require(req(ac.signal));
+    await new Promise((r) => setTimeout(r, 5));
+    ac.abort();
+    expect(await within200ms(p)).toBe('deny');
+    expect(events.some((e) => e.channel === CHANNELS.APPROVAL_RESOLVED)).toBe(true);
+    expect(gate.resolve('s1', 't1', 'allow-once')).toBe(false);
   });
 });
 

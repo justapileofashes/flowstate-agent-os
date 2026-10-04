@@ -1,13 +1,12 @@
 // Flowclaw — control plane over self-hosted agent gateways (OpenClaw WS /
-// Hermes REST), plus the Appliances tab (Meetings + Capture). Visual port of
-// the Claude Design prototype (.design-import/flowstate/project/flowclaw.jsx +
-// flowclaw-appliances.jsx) wired to the real IPC surfaces.
+// Hermes REST). Visual port of the Claude Design prototype
+// (.design-import/flowstate/project/flowclaw.jsx) wired to the real IPC surfaces.
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ipc } from '../lib/ipc';
-import { startSystemAudioCapture } from '../lib/capture';
 import type { AgentDto } from '@shared/chat-types';
 import type {
+  FlowclawAutomationDto,
   FlowclawConnectionDto,
   FlowclawConnectionInputDto,
   FlowclawSkillsListResponse,
@@ -16,8 +15,6 @@ import type {
   FlowclawMsgProvidersResponse,
   FlowclawMsgListResponse,
   RoutineDto,
-  ZoomJobDto,
-  CaptureJobDto,
 } from '@shared/ipc-channels';
 
 /* ---- kind metadata ---------------------------------------------------- */
@@ -406,6 +403,68 @@ function FcTaskRow({
   );
 }
 
+/**
+ * Automations from the older Flowclaw scheduler. They keep running in the
+ * background (every minute tick) but had no UI, so they couldn't be seen or
+ * stopped. New recurring tasks are made in Routines.
+ */
+function FcLegacyAutomations({ connections }: { connections: FlowclawConnectionDto[] }): JSX.Element | null {
+  const [items, setItems] = useState<FlowclawAutomationDto[]>([]);
+  const refresh = useCallback(async () => {
+    try {
+      setItems((await ipc.flowclaw.listAutomations()).automations);
+    } catch {
+      // best-effort
+    }
+  }, []);
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+  if (items.length === 0) return null;
+  return (
+    <div style={{ marginTop: 18 }}>
+      <div className="eyebrow" style={{ marginBottom: 8 }}>
+        Older automations · still running in the background
+      </div>
+      {items.map((a) => (
+        <div key={a.id} className="card-2 fc-task">
+          <div className="fc-task-main">
+            <div className="fc-task-name">{a.label}</div>
+            <div className="fc-task-sub mono">
+              <span>{connections.find((c) => c.id === a.connectionId)?.label ?? a.connectionId}</span>
+              <span className="fc-dotsep">·</span>
+              <span>every {a.intervalMinutes} min</span>
+              {a.lastResult ? (
+                <>
+                  <span className="fc-dotsep">·</span>
+                  <span title={a.lastResult}>last: {a.lastResult.slice(0, 40)}</span>
+                </>
+              ) : null}
+            </div>
+          </div>
+          <div className="fc-task-meta">
+            <div className="fc-task-next">
+              <span className="faint">next</span> {a.enabled ? new Date(a.nextRunAt).toLocaleString() : '—'}
+            </div>
+            <button
+              className="btn btn-sm btn-ghost"
+              onClick={() => void ipc.flowclaw.toggleAutomation(a.id, !a.enabled).then(refresh)}
+            >
+              {a.enabled ? 'Pause' : 'Resume'}
+            </button>
+            <button
+              className="btn btn-sm btn-ghost"
+              onClick={() => void ipc.flowclaw.deleteAutomation(a.id).then(refresh)}
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /* =========================================================
    Empty state
    ========================================================= */
@@ -426,606 +485,10 @@ function FcEmpty({ onAdd }: { onAdd: () => void }): JSX.Element {
   );
 }
 
-/* =========================================================
-   Appliances — shared bits
-   ========================================================= */
-const AP_STATUS: Record<string, { pill: '' | 'good' | 'bad' | 'streaming'; label: string }> = {
-  armed: { pill: '', label: 'armed' },
-  waiting: { pill: 'streaming', label: 'waiting' },
-  recording: { pill: 'streaming', label: 'recording' },
-  downloading: { pill: 'streaming', label: 'downloading' },
-  transcribing: { pill: 'streaming', label: 'transcribing' },
-  summarizing: { pill: 'streaming', label: 'summarizing' },
-  done: { pill: 'good', label: 'done' },
-  error: { pill: 'bad', label: 'error' },
-};
-
-function ApStatusChip({ status }: { status: string }): JSX.Element {
-  const s = AP_STATUS[status] ?? AP_STATUS['armed']!;
-  return <StatusPill kind={s.pill} label={s.label} />;
-}
-
+/** File size as MB for the Files panel. */
 function fmtBytes(n: number): string {
   if (!n) return '0 MB';
   return (n / 1_000_000).toFixed(1) + ' MB';
-}
-
-/* shared agent+connection+model selector row */
-function ApTargetRow({
-  agents,
-  connections,
-  models,
-  agentId,
-  setAgentId,
-  connId,
-  setConnId,
-  model,
-  setModel,
-  listId,
-}: {
-  agents: AgentDto[];
-  connections: FlowclawConnectionDto[];
-  models: string[];
-  agentId: string;
-  setAgentId: (v: string) => void;
-  connId: string;
-  setConnId: (v: string) => void;
-  model: string;
-  setModel: (v: string) => void;
-  listId: string;
-}): JSX.Element {
-  return (
-    <div className="ap-target">
-      <label className="ap-sel">
-        <span className="fc-field-label">Agent</span>
-        <select className="field" value={agentId} onChange={(e) => setAgentId(e.target.value)}>
-          {agents.map((a) => (
-            <option key={a.id} value={a.id}>{a.name}</option>
-          ))}
-        </select>
-      </label>
-      <label className="ap-sel">
-        <span className="fc-field-label">Flowclaw connection</span>
-        <select className="field" value={connId} onChange={(e) => setConnId(e.target.value)}>
-          {connections.map((c) => (
-            <option key={c.id} value={c.id}>{c.label}</option>
-          ))}
-        </select>
-      </label>
-      <label className="ap-sel">
-        <span className="fc-field-label">
-          Model <span className="faint">opt</span>
-        </span>
-        <input className="field mono" list={listId} value={model} onChange={(e) => setModel(e.target.value)} placeholder="default" />
-        <datalist id={listId}>
-          {models.map((m) => (
-            <option key={m} value={m} />
-          ))}
-        </datalist>
-      </label>
-    </div>
-  );
-}
-
-/* shared job list (used by both cards) */
-function ApJobList({
-  jobs,
-  onOpenChat,
-  onOpenPath,
-  onOpenShare,
-}: {
-  jobs: Array<{
-    id: string;
-    title: string;
-    sub: string;
-    status: string;
-    error?: string;
-    chatId?: string;
-    path?: string;
-    shareUrl?: string;
-  }>;
-  onOpenChat: (chatId: string) => void;
-  onOpenPath: (path: string) => void;
-  onOpenShare: (url: string) => void;
-}): JSX.Element | null {
-  if (!jobs.length) return null;
-  return (
-    <div className="ap-jobs">
-      <div className="ap-jobs-label">Recent</div>
-      {jobs.filter(Boolean).map((j) => (
-        <div key={j.id} className="ap-job">
-          <div className="ap-job-main">
-            <div className="ap-job-title">{j.title}</div>
-            <div className="ap-job-sub mono">
-              {j.sub}
-              {j.error ? <span style={{ color: 'var(--bad)' }}> · {j.error}</span> : null}
-            </div>
-          </div>
-          <div className="ap-job-actions">
-            {j.chatId && (
-              <button className="btn btn-sm btn-ghost" title="Open chat" onClick={() => onOpenChat(j.chatId!)}>
-                {FcIcon.chat}
-              </button>
-            )}
-            {j.status === 'done' && j.path && (
-              <button className="btn btn-sm btn-ghost" title="Open recording" onClick={() => onOpenPath(j.path!)}>
-                {FcIcon.open}
-              </button>
-            )}
-            {j.status === 'done' && j.shareUrl && (
-              <button className="btn btn-sm btn-ghost" title="Share link" onClick={() => onOpenShare(j.shareUrl!)}>
-                {FcIcon.link}
-              </button>
-            )}
-            <ApStatusChip status={j.status} />
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-/* =========================================================
-   Meetings card — Zoom recorder (ipc.zoom.*)
-   ========================================================= */
-function MeetingsCard({
-  agents,
-  connections,
-  models,
-  onOpenChat,
-}: {
-  agents: AgentDto[];
-  connections: FlowclawConnectionDto[];
-  models: string[];
-  onOpenChat: (chatId: string) => void;
-}): JSX.Element {
-  const [credsOpen, setCredsOpen] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [creds, setCreds] = useState({ accountId: '', clientId: '', clientSecret: '' });
-  const [credTest, setCredTest] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle');
-  const [credError, setCredError] = useState('');
-
-  const [mode, setMode] = useState<'join' | 'new'>('join');
-  const [meetingId, setMeetingId] = useState('');
-  const [topic, setTopic] = useState('');
-  const [agentId, setAgentId] = useState(agents[0]?.id ?? '');
-  const [connId, setConnId] = useState(connections[0]?.id ?? '');
-  const [model, setModel] = useState('');
-  const [joinUrl, setJoinUrl] = useState<string | null>(null);
-  const [arming, setArming] = useState(false);
-  const [armError, setArmError] = useState('');
-  const [jobs, setJobs] = useState<ZoomJobDto[]>([]);
-
-  // creds saved? a passing auth test on mount means yes
-  useEffect(() => {
-    let alive = true;
-    void ipc.zoom.test().then((r) => {
-      if (alive && r.ok) setSaved(true);
-      if (alive && !r.ok) setCredsOpen(true);
-    }).catch(() => setCredsOpen(true));
-    return () => {
-      alive = false;
-    };
-  }, []);
-
-  // poll jobs while mounted
-  useEffect(() => {
-    let alive = true;
-    const tick = (): void => {
-      void ipc.zoom.jobs().then((r) => {
-        if (alive) setJobs(r.jobs.filter(Boolean));
-      }).catch(() => {});
-    };
-    tick();
-    const id = setInterval(tick, 3_000);
-    return () => {
-      alive = false;
-      clearInterval(id);
-    };
-  }, []);
-
-  const saveCreds = async (): Promise<void> => {
-    await ipc.zoom.saveCreds(creds);
-    setSaved(true);
-    setCredsOpen(false);
-    setCreds({ accountId: '', clientId: '', clientSecret: '' });
-  };
-
-  const testCreds = async (): Promise<void> => {
-    setCredTest('testing');
-    setCredError('');
-    try {
-      const r = await ipc.zoom.test();
-      setCredTest(r.ok ? 'ok' : 'fail');
-      if (!r.ok) setCredError(r.error ?? 'auth failed');
-    } catch (err) {
-      setCredTest('fail');
-      setCredError(err instanceof Error ? err.message : String(err));
-    }
-  };
-
-  const arm = async (): Promise<void> => {
-    setArming(true);
-    setArmError('');
-    setJoinUrl(null);
-    try {
-      const res = await ipc.zoom.record({
-        ...(mode === 'join' ? { meetingId: meetingId.replace(/\s+/g, '') } : {}),
-        ...(mode === 'new' ? { topic } : {}),
-        agentId,
-        connectionId: connId,
-        ...(model ? { model } : {}),
-      });
-      if (res.error) setArmError(res.error);
-      if (res.joinUrl) setJoinUrl(res.joinUrl);
-    } catch (err) {
-      setArmError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setArming(false);
-    }
-  };
-
-  return (
-    <div className="card ap-card">
-      <div className="ap-card-head">
-        <div className="ap-card-title">
-          <span className="ap-card-ic">{FcIcon.cam}</span>
-          <div>
-            <div className="ap-card-name">
-              Meetings <span className="ap-sub">Zoom recorder</span>
-            </div>
-            <div className="hint">Joins as a participant, records, and summarizes into a chat.</div>
-          </div>
-        </div>
-        {saved ? <StatusPill kind="good" label="credentials saved" /> : <StatusPill kind="bad" label="setup needed" />}
-      </div>
-
-      {/* credentials (collapsible) */}
-      <button className="ap-collapse" onClick={() => setCredsOpen((o) => !o)}>
-        <span className={'ap-chev ' + (credsOpen ? 'open' : '')}>{FcIcon.chev}</span>
-        Server-to-Server OAuth credentials
-      </button>
-      {credsOpen && (
-        <div className="ap-creds">
-          <div className="fc-field-label">Account ID</div>
-          <input className="field mono" value={creds.accountId} onChange={(e) => setCreds({ ...creds, accountId: e.target.value })} placeholder={saved ? '•••••••• (saved)' : 'Paste account id'} />
-          <div className="fc-field-label" style={{ marginTop: 12 }}>Client ID</div>
-          <input className="field mono" value={creds.clientId} onChange={(e) => setCreds({ ...creds, clientId: e.target.value })} placeholder={saved ? '•••••••• (saved)' : 'Paste client id'} />
-          <div className="fc-field-label" style={{ marginTop: 12 }}>Client secret</div>
-          <input className="field mono" type="password" value={creds.clientSecret} onChange={(e) => setCreds({ ...creds, clientSecret: e.target.value })} placeholder={saved ? '•••••••• (saved)' : 'Paste client secret'} autoComplete="off" />
-          <div className="hint">From a Server-to-Server OAuth app in the Zoom Marketplace. Stored encrypted; never read back.</div>
-          {credError && <div className="fc-errline">{credError}</div>}
-          <div className="row gap-2" style={{ marginTop: 12 }}>
-            <button
-              className="btn btn-sm btn-primary"
-              disabled={!creds.accountId || !creds.clientId || !creds.clientSecret}
-              onClick={() => void saveCreds()}
-            >
-              Save
-            </button>
-            <button className="btn btn-sm" onClick={() => void testCreds()} disabled={credTest === 'testing'}>
-              {FcIcon.link}
-              <span>{credTest === 'testing' ? 'Testing…' : 'Test'}</span>
-            </button>
-            {credTest === 'ok' && <StatusPill kind="good" label="auth ok" />}
-          </div>
-        </div>
-      )}
-
-      {/* record form */}
-      <div className="ap-divider" />
-      <div className="ap-toggle">
-        <button className={mode === 'join' ? 'on' : ''} onClick={() => setMode('join')}>Record existing</button>
-        <button className={mode === 'new' ? 'on' : ''} onClick={() => setMode('new')}>New meeting</button>
-      </div>
-      {mode === 'join' ? (
-        <>
-          <div className="fc-field-label" style={{ marginTop: 12 }}>Meeting ID</div>
-          <input className="field mono" value={meetingId} onChange={(e) => setMeetingId(e.target.value)} placeholder="123 4567 8901" />
-        </>
-      ) : (
-        <>
-          <div className="fc-field-label" style={{ marginTop: 12 }}>Topic</div>
-          <input className="field" value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="What's the meeting about?" />
-        </>
-      )}
-      <ApTargetRow
-        agents={agents}
-        connections={connections}
-        models={models}
-        agentId={agentId}
-        setAgentId={setAgentId}
-        connId={connId}
-        setConnId={setConnId}
-        model={model}
-        setModel={setModel}
-        listId="ap-models-zoom"
-      />
-      {armError && <div className="fc-errline">{armError}</div>}
-      <div className="row gap-2" style={{ marginTop: 12 }}>
-        <button
-          className="btn btn-sm btn-primary"
-          onClick={() => void arm()}
-          disabled={arming || !agentId || !connId || (mode === 'join' ? !meetingId.trim() : !topic.trim())}
-        >
-          {FcIcon.cam}
-          <span>{arming ? 'Arming…' : mode === 'new' ? 'Create & record' : 'Arm recorder'}</span>
-        </button>
-        {joinUrl && (
-          <div className="ap-joinurl mono">
-            {FcIcon.link}
-            <span>{joinUrl}</span>
-            <button className="btn btn-sm btn-ghost" title="Copy" onClick={() => void navigator.clipboard.writeText(joinUrl)}>
-              copy
-            </button>
-          </div>
-        )}
-      </div>
-
-      <ApJobList
-        jobs={jobs.map((j) => ({
-          id: j.id,
-          title: j.topic,
-          sub: new Date(j.createdAt).toLocaleString(),
-          status: j.status,
-          ...(j.error ? { error: j.error } : {}),
-          ...(j.chatId ? { chatId: j.chatId } : {}),
-          ...(j.recordingFiles?.[0] ? { path: j.recordingFiles[0] } : {}),
-          ...(j.shareUrl ? { shareUrl: j.shareUrl } : {}),
-        }))}
-        onOpenChat={onOpenChat}
-        onOpenPath={(p) => void ipc.zoom.openRecording(p)}
-        onOpenShare={(u) => void navigator.clipboard.writeText(u)}
-      />
-    </div>
-  );
-}
-
-/* =========================================================
-   Capture card — system-audio recorder (ipc.capture.*)
-   ========================================================= */
-function CaptureCard({
-  agents,
-  connections,
-  models,
-  onOpenChat,
-}: {
-  agents: AgentDto[];
-  connections: FlowclawConnectionDto[];
-  models: string[];
-  onOpenChat: (chatId: string) => void;
-}): JSX.Element {
-  const [title, setTitle] = useState('');
-  const [agentId, setAgentId] = useState(agents[0]?.id ?? '');
-  const [connId, setConnId] = useState(connections[0]?.id ?? '');
-  const [model, setModel] = useState('');
-
-  const [recording, setRecording] = useState(false);
-  const [activeId, setActiveId] = useState<string | null>(null);
-  const [elapsed, setElapsed] = useState(0);
-  const [captureError, setCaptureError] = useState('');
-  const stopRef = useRef<(() => Promise<void>) | null>(null);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  const [jobs, setJobs] = useState<CaptureJobDto[]>([]);
-
-  const [txOpen, setTxOpen] = useState(false);
-  const [txMode, setTxMode] = useState<'openai' | 'cli'>('openai');
-  const [txUrl, setTxUrl] = useState('https://api.openai.com/v1');
-  const [txModel, setTxModel] = useState('whisper-1');
-  const [txKey, setTxKey] = useState('');
-  const [txCommand, setTxCommand] = useState('whisper {file} --model base --output_format txt');
-  const [txTest, setTxTest] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle');
-  const [txError, setTxError] = useState('');
-
-  // poll jobs while mounted
-  useEffect(() => {
-    let alive = true;
-    const tick = (): void => {
-      void ipc.capture.jobs().then((r) => {
-        if (alive) setJobs(r.jobs.filter(Boolean));
-      }).catch(() => {});
-    };
-    tick();
-    const id = setInterval(tick, 3_000);
-    return () => {
-      alive = false;
-      clearInterval(id);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (recording) {
-      timerRef.current = setInterval(() => setElapsed((e) => e + 1), 1_000);
-    } else if (timerRef.current) {
-      clearInterval(timerRef.current);
-    }
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
-  }, [recording]);
-
-  const start = async (): Promise<void> => {
-    setCaptureError('');
-    try {
-      const { captureId } = await ipc.capture.start({
-        title: title.trim(),
-        agentId,
-        connectionId: connId,
-        ...(model ? { model } : {}),
-      });
-      const handle = await startSystemAudioCapture(captureId);
-      stopRef.current = handle.stop;
-      setActiveId(captureId);
-      setElapsed(0);
-      setRecording(true);
-    } catch (err) {
-      setCaptureError(err instanceof Error ? err.message : String(err));
-    }
-  };
-
-  const stop = async (): Promise<void> => {
-    setRecording(false);
-    try {
-      await stopRef.current?.();
-    } catch (err) {
-      setCaptureError(err instanceof Error ? err.message : String(err));
-    }
-    stopRef.current = null;
-    setActiveId(null);
-    setTitle('');
-  };
-
-  const saveTranscriber = async (): Promise<void> => {
-    await ipc.capture.saveTranscriber({
-      mode: txMode,
-      ...(txMode === 'openai' ? { url: txUrl, model: txModel } : {}),
-      ...(txMode === 'openai' && txKey ? { apiKey: txKey } : {}),
-      ...(txMode === 'cli' ? { command: txCommand } : {}),
-    });
-    setTxKey('');
-  };
-
-  const testTranscriber = async (): Promise<void> => {
-    setTxTest('testing');
-    setTxError('');
-    try {
-      const r = await ipc.capture.testTranscriber();
-      setTxTest(r.ok ? 'ok' : 'fail');
-      if (!r.ok) setTxError(r.error ?? 'failed');
-    } catch (err) {
-      setTxTest('fail');
-      setTxError(err instanceof Error ? err.message : String(err));
-    }
-  };
-
-  const liveBytes = activeId ? (jobs.find((j) => j.id === activeId)?.bytes ?? 0) : 0;
-  const mm = String(Math.floor(elapsed / 60)).padStart(2, '0');
-  const ss = String(elapsed % 60).padStart(2, '0');
-
-  return (
-    <div className="card ap-card">
-      <div className="ap-card-head">
-        <div className="ap-card-title">
-          <span className="ap-card-ic">{FcIcon.mic}</span>
-          <div>
-            <div className="ap-card-name">
-              Capture <span className="ap-sub">system audio</span>
-            </div>
-            <div className="hint">Record any call — Meet, Teams, webinars — by capturing system audio locally.</div>
-          </div>
-        </div>
-        {recording && (
-          <span className="pill streaming">
-            <span className="dot dot-pulse"></span>
-            <span>recording</span>
-          </span>
-        )}
-      </div>
-
-      {!recording ? (
-        <>
-          <div className="fc-field-label" style={{ marginTop: 4 }}>Title</div>
-          <input className="field" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What are you recording?" />
-          <ApTargetRow
-            agents={agents}
-            connections={connections}
-            models={models}
-            agentId={agentId}
-            setAgentId={setAgentId}
-            connId={connId}
-            setConnId={setConnId}
-            model={model}
-            setModel={setModel}
-            listId="ap-models-capture"
-          />
-          {captureError && <div className="fc-errline">{captureError}</div>}
-          <button
-            className="btn btn-sm btn-primary"
-            style={{ marginTop: 12 }}
-            onClick={() => void start()}
-            disabled={!title.trim() || !agentId || !connId}
-          >
-            {FcIcon.mic}
-            <span>Start capture</span>
-          </button>
-        </>
-      ) : (
-        <div className="ap-recording">
-          <div className="ap-rec-dot">
-            <span className="dot dot-pulse"></span>
-          </div>
-          <div className="ap-rec-time mono">{mm}:{ss}</div>
-          <div className="ap-rec-size mono">{fmtBytes(liveBytes)}</div>
-          <div style={{ flex: 1 }} />
-          <button className="btn btn-sm" onClick={() => void stop()}>Stop</button>
-        </div>
-      )}
-
-      {/* transcriber settings */}
-      <div className="ap-divider" />
-      <button className="ap-collapse" onClick={() => setTxOpen((o) => !o)}>
-        <span className={'ap-chev ' + (txOpen ? 'open' : '')}>{FcIcon.chev}</span>
-        Transcriber settings
-      </button>
-      {txOpen && (
-        <div className="ap-creds">
-          <div className="ap-toggle" style={{ marginBottom: 12 }}>
-            <button className={txMode === 'openai' ? 'on' : ''} onClick={() => setTxMode('openai')}>OpenAI</button>
-            <button className={txMode === 'cli' ? 'on' : ''} onClick={() => setTxMode('cli')}>CLI</button>
-          </div>
-          {txMode === 'openai' ? (
-            <>
-              <div className="fc-field-label">Endpoint</div>
-              <input className="field mono" value={txUrl} onChange={(e) => setTxUrl(e.target.value)} />
-              <div className="fc-field-label" style={{ marginTop: 12 }}>Model</div>
-              <input className="field mono" value={txModel} onChange={(e) => setTxModel(e.target.value)} />
-              <div className="fc-field-label" style={{ marginTop: 12 }}>
-                API key <span className="faint">opt</span>
-              </div>
-              <input className="field mono" type="password" value={txKey} onChange={(e) => setTxKey(e.target.value)} placeholder="•••••••• (write-only)" autoComplete="off" />
-            </>
-          ) : (
-            <>
-              <div className="fc-field-label">Command template</div>
-              <input className="field mono" value={txCommand} onChange={(e) => setTxCommand(e.target.value)} />
-              <div className="hint">
-                Use <span className="mono" style={{ color: 'var(--ink)' }}>{'{file}'}</span> where the audio path goes.
-              </div>
-            </>
-          )}
-          {txError && <div className="fc-errline">{txError}</div>}
-          <div className="row gap-2" style={{ marginTop: 12 }}>
-            <button className="btn btn-sm btn-primary" onClick={() => void saveTranscriber()}>Save</button>
-            <button className="btn btn-sm" onClick={() => void testTranscriber()} disabled={txTest === 'testing'}>
-              {txTest === 'testing' ? 'Testing…' : 'Test'}
-            </button>
-            {txTest === 'ok' && <StatusPill kind="good" label="reachable" />}
-          </div>
-        </div>
-      )}
-
-      <div className="hint ap-consent">
-        Recording calls may require participant consent depending on your jurisdiction and the host's
-        terms. You are responsible for obtaining consent.
-      </div>
-
-      <ApJobList
-        jobs={jobs.map((j) => ({
-          id: j.id,
-          title: j.title,
-          sub: `${new Date(j.createdAt).toLocaleString()} · ${fmtBytes(j.bytes)}`,
-          status: j.status,
-          ...(j.error ? { error: j.error } : {}),
-          ...(j.chatId ? { chatId: j.chatId } : {}),
-          ...(j.status === 'done' ? { path: j.audioPath } : {}),
-        }))}
-        onOpenChat={onOpenChat}
-        onOpenPath={(p) => void navigator.clipboard.writeText(p)}
-        onOpenShare={() => {}}
-      />
-    </div>
-  );
 }
 
 /* =========================================================
@@ -1638,7 +1101,7 @@ export function Flowclaw({
   onOpenChat: (agent: AgentDto, chatId?: string) => void;
   onGoRoutines?: () => void;
 }): JSX.Element {
-  const [tab, setTab] = useState<'connections' | 'capabilities' | 'tasks' | 'appliances'>('connections');
+  const [tab, setTab] = useState<'connections' | 'capabilities' | 'tasks'>('connections');
   const [conns, setConns] = useState<FlowclawConnectionDto[]>([]);
   const [loading, setLoading] = useState(true);
   const [tasks, setTasks] = useState<RoutineDto[]>([]);
@@ -1694,12 +1157,6 @@ export function Flowclaw({
     const agent = agents.find((a) => a.id === task.agentId);
     if (agent) onOpenChat(agent, task.lastChatId);
   };
-  const openChatById = (chatId: string): void => {
-    // resolve owner agent lazily — first agent fallback keeps the click useful
-    const agent = agents[0];
-    if (agent) onOpenChat(agent, chatId);
-  };
-
   const enabledConns = conns.filter((c) => c.enabled);
   const enabledCount = enabledConns.length;
 
@@ -1726,9 +1183,6 @@ export function Flowclaw({
           </button>
           <button className={'tab ' + (tab === 'tasks' ? 'on' : '')} onClick={() => setTab('tasks')}>
             Tasks <span className="faint">{tasks.length}</span>
-          </button>
-          <button className={'tab ' + (tab === 'appliances' ? 'on' : '')} onClick={() => setTab('appliances')}>
-            Appliances <span className="faint">2</span>
           </button>
         </div>
         <div style={{ flex: 1 }} />
@@ -1784,13 +1238,7 @@ export function Flowclaw({
               onRunNow={(x) => void onRunNow(x)}
             />
           ))}
-        </div>
-      )}
-
-      {tab === 'appliances' && (
-        <div className="ap-grid">
-          <MeetingsCard agents={agents} connections={enabledConns} models={models} onOpenChat={openChatById} />
-          <CaptureCard agents={agents} connections={enabledConns} models={models} onOpenChat={openChatById} />
+          <FcLegacyAutomations connections={conns} />
         </div>
       )}
 

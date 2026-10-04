@@ -1,4 +1,4 @@
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import { useState } from 'react';
@@ -132,7 +132,17 @@ export function MarkdownText({ children }: Props): JSX.Element {
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeHighlight]}
+        // Pasted images are stored as data URLs; keep them for <img> only
+        // (links stay on the default safe-protocol list).
+        urlTransform={(url, key, node) =>
+          key === 'src' && node.tagName === 'img' && /^data:image\/[a-z0-9.+-]+;base64,/i.test(url)
+            ? url
+            : defaultUrlTransform(url)
+        }
         components={{
+          img: ({ src, alt }) => (
+            <img src={src} alt={alt ?? ''} style={{ maxWidth: 320, maxHeight: 240, borderRadius: 6 }} />
+          ),
           a: ({ children, href }) => (
             <a
               href={href}

@@ -2493,65 +2493,8 @@ select.field { appearance: none; cursor: pointer;
 
 .stk-empty { flex: 1; display: grid; place-items: center; color: var(--ink-faint); font-size: 13px; padding: 40px; text-align: center; }
 
-/* ---- locked overlay (free tier) ---- */
-.stk-locked-wrap { position: relative; flex: 1; min-height: 0; }
-.stk-locked-blur { filter: blur(2.5px) saturate(0.7); opacity: 0.5; pointer-events: none; height: 100%; }
-.stk-locked-over {
-  position: absolute; inset: 0; display: grid; place-items: center;
-  background: radial-gradient(ellipse at center, rgba(14,13,12,0.55), rgba(14,13,12,0.86));
-}
-.stk-locked-card {
-  width: min(420px, calc(100% - 48px));
-  border: 1px solid var(--border-strong); border-radius: var(--r-lg);
-  background: rgba(20,17,14,0.92); padding: 26px 26px 24px;
-  text-align: center; backdrop-filter: blur(8px);
-}
-.stk-locked-icon {
-  width: 42px; height: 42px; margin: 0 auto 14px; border-radius: 12px;
-  background: var(--surface-2); border: 1px solid var(--border);
-  display: grid; place-items: center; color: var(--ink-strong);
-}
-.stk-locked-card h3 { margin: 0; font-size: 20px; font-weight: 400; color: var(--ink-strong); letter-spacing: -0.01em; }
-.stk-locked-card p { margin: 8px auto 0; font-size: 13px; color: var(--ink-muted); line-height: 1.5; max-width: 34ch; }
-.stk-locked-perks { list-style: none; margin: 16px 0 18px; padding: 0; display: flex; flex-direction: column; gap: 9px; text-align: left; max-width: 280px; margin-left: auto; margin-right: auto; }
-.stk-locked-perks li { display: flex; gap: 9px; align-items: flex-start; font-size: 12.5px; color: var(--ink); }
-.stk-locked-perks li svg { flex: 0 0 15px; margin-top: 1px; color: var(--ink-strong); }
-.stk-locked-cta { display: flex; gap: 10px; justify-content: center; align-items: center; }
-
 /* =========================================================
-   Crypto pay + redeem (self-issued license keys). Used in the upsell modal
-   and Settings -> Account. Monochrome, design-system tokens only.
-   ========================================================= */
-.crypto-unlock { display: flex; flex-direction: column; gap: 12px; }
-.crypto-pay-head { font-size: 12.5px; color: var(--ink); line-height: 1.5; }
-.crypto-addrs {
-  display: flex; flex-direction: column; gap: 8px;
-  padding: 12px; border: 1px solid var(--border); border-radius: var(--r-md);
-  background: var(--surface-2);
-}
-.crypto-addr-wrap { display: flex; flex-direction: column; gap: 3px; }
-.crypto-addr-hint { font-size: 10.5px; color: var(--ink-faint); padding-left: 52px; line-height: 1.4; }
-.crypto-addr { display: flex; align-items: center; gap: 8px; }
-.crypto-addr-label {
-  flex: 0 0 44px; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase;
-  color: var(--ink-faint); font-family: var(--font-mono);
-}
-.crypto-addr-val {
-  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-strong);
-  background: var(--surface-3); border: 1px solid var(--border); border-radius: var(--r-sm);
-  padding: 4px 8px;
-}
-.crypto-contact { font-size: 11.5px; color: var(--ink-muted); line-height: 1.5; margin-top: 2px; }
-.crypto-contact b { color: var(--ink-strong); }
-.crypto-redeem { display: flex; gap: 8px; align-items: center; }
-.crypto-redeem .field { flex: 1; font-family: var(--font-mono); font-size: 11.5px; }
-.gopay-qr-wrap { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 4px 0; }
-.gopay-qr { width: 184px; height: 184px; border-radius: var(--r-md); background: #fff; display: block; object-fit: contain; }
-.gopay-qr-cap { font-size: 11px; color: var(--ink-muted); font-family: var(--font-mono); letter-spacing: 0.02em; }
-
-/* =========================================================
-   Terminal view — line-oriented shell panel (Flowstate v2 redesign)
+   Terminal view — xterm.js panel (Flowstate v2 redesign)
    ========================================================= */
 .term {
   display: flex;
@@ -2582,6 +2525,10 @@ select.field { appearance: none; cursor: pointer;
 }
 .term-cwd { color: var(--ink-faint); font-size: 11px; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .term-actions { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+/* xterm.js host: fills the panel; xterm sizes its canvas to this box. */
+.term-xterm { flex: 1 1 auto; min-height: 0; padding: 8px 4px 8px 12px; background: #0a0908; overflow: hidden; }
+.term-xterm .xterm { height: 100%; }
+.term-xterm .xterm-viewport { background: #0a0908 !important; }
 .term-ctl {
   appearance: none;
   border: 0;
@@ -2597,86 +2544,6 @@ select.field { appearance: none; cursor: pointer;
 }
 .term-ctl:hover { color: var(--ink); background: rgba(240,236,226,0.05); }
 .term-ctl:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
-
-/* running affordance */
-.term-run {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  color: var(--ink-muted);
-  font-size: 11px;
-  letter-spacing: 0.04em;
-}
-.term-run i {
-  width: 3px; height: 3px; border-radius: 999px;
-  background: var(--accent);
-  animation: termPulse 1.1s var(--ease) infinite;
-}
-.term-run i:nth-child(2) { animation-delay: 0.18s; }
-.term-run i:nth-child(3) { animation-delay: 0.36s; }
-@keyframes termPulse {
-  0%, 100% { opacity: 0.2; }
-  50% { opacity: 1; }
-}
-
-/* 2 — output */
-.term-out {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 14px 16px;
-  font-size: 12px;
-  line-height: 1.65;
-  color: var(--ink-muted);
-  cursor: text;
-}
-.term-line { white-space: pre-wrap; word-break: break-word; }
-.term-line.out   { color: var(--ink-muted); }
-.term-line.sys   { color: var(--ink-faint); }
-.term-line.err   { color: var(--bad); }
-.term-line.good  { color: var(--good); }
-.term-line.cmd   { color: var(--ink); margin-top: 4px; }
-.term-echo::before {
-  content: "\203A  ";
-  color: var(--ink-faint);
-}
-.term-blink { animation: termBlink 1s steps(1) infinite; color: var(--accent); }
-@keyframes termBlink { 50% { opacity: 0; } }
-
-/* 3 — input row */
-.term-input {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 10px 16px;
-  border-top: 1px solid var(--border);
-  background: var(--bg);
-  flex: 0 0 auto;
-}
-.term-prompt { color: var(--accent); font-size: 13px; line-height: 1; }
-.term-field {
-  flex: 1 1 auto;
-  appearance: none;
-  border: 0;
-  background: transparent;
-  color: var(--ink);
-  font-family: var(--font-mono);
-  font-size: 12.5px;
-  padding: 2px 0;
-  outline: none;
-  caret-color: var(--accent);
-}
-.term-field::placeholder { color: var(--ink-faint); }
-.term-field:focus-visible { outline: none; }
-.term-input:focus-within { box-shadow: inset 0 1px 0 rgba(232,227,213,0.06); }
-.term-input.is-off { opacity: 0.92; }
-.term-input.is-off .term-prompt { color: var(--ink-faint); }
-
-@media (prefers-reduced-motion: reduce) {
-  .term-run i, .term-blink { animation: none; }
-  .term-blink { opacity: 1; }
-}
-
 
 /* ───────────────────────── AI Trader (screens/trader) ───────────────────────── */
 .tr-host { flex: 1; min-height: 0; overflow-y: auto; }

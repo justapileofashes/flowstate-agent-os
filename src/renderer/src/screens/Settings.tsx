@@ -1,9 +1,260 @@
 import { useEffect, useRef, useState, type JSX } from 'react';
 import { ipc } from '../lib/ipc';
+import { ipcErrorMessage } from '../lib/ipc-error';
+import type { OllamaCloudStatusResponse, UpdateStatusDto } from '@shared/ipc-channels';
 import { ShortcutsList } from '../chat/ShortcutsModal';
 import { McpServersCard } from './McpServersCard';
+import { WebSearchCard } from './WebSearchCard';
 import { DevToolsSettings } from './DevToolsSettings';
 import { BrandLogo } from '../lib/brand-logos';
+
+/** Any OpenAI-compatible server (LM Studio, llama.cpp, vLLM, Jan, OpenRouter…).
+ *  Its models show up everywhere models are picked, as `custom/<id>`. */
+function CustomServerRow(): JSX.Element {
+  const [url, setUrl] = useState('');
+  const [key, setKey] = useState('');
+  const [status, setStatus] = useState<string>('');
+
+  useEffect(() => {
+    void ipc.settings.get('custom_openai_base_url').then((r) => setUrl(r.value ?? ''));
+  }, []);
+
+  async function save(): Promise<void> {
+    await ipc.settings.set('custom_openai_base_url', url.trim());
+    if (key) await ipc.settings.set('custom_openai_api_key', key);
+    setKey('');
+    setStatus('Saved — checking…');
+    try {
+      const { models } = await ipc.chat.listModels();
+      const n = models.filter((m) => m.name.startsWith('custom/')).length;
+      setStatus(n ? `Connected — ${n} model${n === 1 ? '' : 's'} available as custom/…` : 'Saved, but no models found at that URL.');
+    } catch {
+      setStatus('Saved, but the server did not answer.');
+    }
+  }
+
+  return (
+    <div className="settings-row">
+      <div className="lab">
+        OpenAI-compatible server
+        <span className="hint">
+          LM Studio, llama.cpp, vLLM, Jan, OpenRouter… e.g. <span className="mono">http://localhost:1234/v1</span>. Key
+          optional; stored encrypted.
+        </span>
+      </div>
+      <div className="col gap-2" style={{ minWidth: 280 }}>
+        <input className="field mono" placeholder="http://localhost:1234/v1" value={url} onChange={(e) => setUrl(e.target.value)} />
+        <input
+          className="field mono"
+          type="password"
+          placeholder="API key (optional, write-only)"
+          value={key}
+          onChange={(e) => setKey(e.target.value)}
+          autoComplete="off"
+        />
+        <div className="row gap-2" style={{ alignItems: 'center' }}>
+          <button type="button" className="btn btn-sm" onClick={() => void save()}>
+            Save
+          </button>
+          {status && <span className="muted text-sm">{status}</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Keep the app (and its routines, schedulers and automations) running in the
+ *  tray when the window closes, and optionally start it at login. */
+function BackgroundSection(): JSX.Element {
+  const [closeToTray, setCloseToTray] = useState(true);
+  const [login, setLogin] = useState<{ supported: boolean; enabled: boolean } | null>(null);
+
+  useEffect(() => {
+    void ipc.settings.get('close_to_tray').then((r) => setCloseToTray(r.value !== 'false'));
+    void ipc.loginItem.get().then(setLogin).catch(() => setLogin(null));
+  }, []);
+
+  function toggleTray(): void {
+    const next = !closeToTray;
+    setCloseToTray(next);
+    void ipc.settings.set('close_to_tray', next ? 'true' : 'false').catch(() => setCloseToTray(!next));
+  }
+
+  function toggleLogin(): void {
+    if (!login) return;
+    void ipc.loginItem.set(!login.enabled).then((r) => setLogin({ ...login, enabled: r.enabled }));
+  }
+
+  const row = (label: string, hint: string, on: boolean, onClick: () => void, disabled = false): JSX.Element => (
+    <div className="settings-row">
+      <div className="lab">
+        {label}
+        <span className="hint">{hint}</span>
+      </div>
+      <div className="row" style={{ alignItems: 'center', gap: 10 }}>
+        <button
+          type="button"
+          className={'biz-switch ' + (on ? 'on' : '')}
+          onClick={onClick}
+          disabled={disabled}
+          role="switch"
+          aria-checked={on}
+          aria-label={label}
+        >
+          <span className="biz-switch-knob" />
+        </button>
+        <span className="muted text-sm">{on ? 'On' : 'Off'}</span>
+      </div>
+    </div>
+  );
+
+  return (
+    <section className="settings-section">
+      <div className="head"><h3>Background</h3></div>
+      {row(
+        'Keep running when the window is closed',
+        'Routines, the AI Trader, Business schedules and automations keep running from the tray. Quit from the tray icon.',
+        closeToTray,
+        toggleTray,
+      )}
+      {row(
+        'Start with Windows',
+        login?.supported === false ? 'Available in the installed app.' : 'Starts minimized to the tray when you sign in.',
+        !!login?.enabled,
+        toggleLogin,
+        !login?.supported,
+      )}
+    </section>
+  );
+}
+
+/** Speech-to-text backend for the composer's mic button: any OpenAI-compatible
+ *  /v1/audio/transcriptions server (OpenAI, speaches, faster-whisper-server)
+ *  or a local CLI command. The API key is write-only — blank keeps the stored one. */
+function VoiceInputSection(): JSX.Element {
+  const [mode, setMode] = useState<'openai' | 'cli'>('openai');
+  const [url, setUrl] = useState('https://api.openai.com/v1');
+  const [model, setModel] = useState('whisper-1');
+  const [key, setKey] = useState('');
+  const [hasKey, setHasKey] = useState(false);
+  const [command, setCommand] = useState('whisper {file} --model base --output_format txt');
+  const [status, setStatus] = useState<'idle' | 'saved' | 'testing' | 'ok' | 'fail'>('idle');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    void ipc.voice.getTranscriber().then(({ config }) => {
+      if (!config) return;
+      setMode(config.mode);
+      if (config.url) setUrl(config.url);
+      if (config.model) setModel(config.model);
+      if (config.command) setCommand(config.command);
+      setHasKey(config.hasKey);
+    });
+  }, []);
+
+  async function save(): Promise<void> {
+    setError('');
+    try {
+      await ipc.voice.saveTranscriber({
+        mode,
+        ...(mode === 'openai' ? { url, model } : { command }),
+        ...(mode === 'openai' && key ? { apiKey: key } : {}),
+      });
+      if (key) setHasKey(true);
+      setKey('');
+      setStatus('saved');
+    } catch (err) {
+      setStatus('fail');
+      setError(ipcErrorMessage(err));
+    }
+  }
+
+  async function test(): Promise<void> {
+    setStatus('testing');
+    setError('');
+    try {
+      const r = await ipc.voice.testTranscriber();
+      setStatus(r.ok ? 'ok' : 'fail');
+      if (!r.ok) setError(r.error ?? 'failed');
+    } catch (err) {
+      setStatus('fail');
+      setError(ipcErrorMessage(err));
+    }
+  }
+
+  return (
+    <section className="settings-section">
+      <div className="head">
+        <h3>Voice input</h3>
+        <span className="muted text-xs">Speech-to-text for the composer's mic button.</span>
+      </div>
+      <div className="row gap-2" style={{ marginBottom: 12 }}>
+        <button
+          type="button"
+          className={'btn btn-sm ' + (mode === 'openai' ? 'btn-primary' : 'btn-ghost')}
+          onClick={() => setMode('openai')}
+        >
+          OpenAI-compatible
+        </button>
+        <button
+          type="button"
+          className={'btn btn-sm ' + (mode === 'cli' ? 'btn-primary' : 'btn-ghost')}
+          onClick={() => setMode('cli')}
+        >
+          Local command
+        </button>
+      </div>
+      {mode === 'openai' ? (
+        <>
+          <label className="settings-row">
+            <span className="lab">Endpoint</span>
+            <input className="field mono" value={url} onChange={(e) => setUrl(e.target.value)} />
+          </label>
+          <label className="settings-row">
+            <span className="lab">Model</span>
+            <input className="field mono" value={model} onChange={(e) => setModel(e.target.value)} />
+          </label>
+          <label className="settings-row">
+            <span className="lab">
+              API key
+              <span className="hint">Optional for local servers. Stored encrypted; never shown again.</span>
+            </span>
+            <input
+              className="field mono"
+              type="password"
+              value={key}
+              onChange={(e) => setKey(e.target.value)}
+              placeholder={hasKey ? '•••••••• (saved — blank keeps it)' : '(none)'}
+              autoComplete="off"
+            />
+          </label>
+        </>
+      ) : (
+        <label className="settings-row">
+          <span className="lab">
+            Command template
+            <span className="hint">
+              <span className="mono">{'{file}'}</span> is replaced with the audio path; the command must print
+              the transcript.
+            </span>
+          </span>
+          <input className="field mono" value={command} onChange={(e) => setCommand(e.target.value)} />
+        </label>
+      )}
+      {error && <div className="hint" style={{ color: 'var(--bad)' }}>{error}</div>}
+      <div className="row gap-2" style={{ marginTop: 12, alignItems: 'center' }}>
+        <button type="button" className="btn btn-sm btn-primary" onClick={() => void save()}>
+          Save
+        </button>
+        <button type="button" className="btn btn-sm" onClick={() => void test()} disabled={status === 'testing'}>
+          {status === 'testing' ? 'Testing…' : 'Test'}
+        </button>
+        {status === 'saved' && <span className="muted text-sm">Saved</span>}
+        {status === 'ok' && <span className="muted text-sm">Working</span>}
+      </div>
+    </section>
+  );
+}
 
 function NotificationsSection(): JSX.Element {
   const [enabled, setEnabled] = useState(true);
@@ -54,6 +305,74 @@ function NotificationsSection(): JSX.Element {
   );
 }
 
+function updateLine(s: UpdateStatusDto): string {
+  switch (s.state) {
+    case 'disabled':
+      return s.reason ?? 'Updates are off for this copy.';
+    case 'checking':
+      return 'Checking GitHub for a new version…';
+    case 'none':
+      return s.note ?? 'You have the latest version.';
+    case 'downloading':
+      return `Downloading ${s.version ?? 'update'}… ${s.percent ?? 0}%`;
+    case 'ready':
+      return `Version ${s.version} is ready — restart to install (or it installs when you quit).`;
+    case 'error':
+      return s.error ?? 'Update check failed.';
+    default:
+      return 'Checks for updates on launch and every few hours.';
+  }
+}
+
+function UpdatesSection(): JSX.Element {
+  const [status, setStatus] = useState<UpdateStatusDto | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    void ipc.updates.status().then(setStatus).catch(() => {});
+    return ipc.updates.onStatus(setStatus);
+  }, []);
+
+  async function check(): Promise<void> {
+    setBusy(true);
+    try {
+      setStatus(await ipc.updates.check());
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="settings-section">
+      <div className="head"><h3>Updates</h3></div>
+      <div className="settings-row">
+        <div className="lab">
+          Flowstate {status?.current ?? ''}
+          <span className="hint" style={status?.state === 'error' ? { color: 'var(--bad)' } : undefined}>
+            {status ? updateLine(status) : 'Loading…'}
+          </span>
+        </div>
+        <div className="row gap-2">
+          {status?.state === 'ready' ? (
+            <button type="button" className="btn btn-sm btn-primary" onClick={() => void ipc.updates.install()}>
+              Restart to update
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="btn btn-sm"
+              disabled={busy || !status || status.state === 'disabled' || status.state === 'checking' || status.state === 'downloading'}
+              onClick={() => void check()}
+            >
+              {busy ? 'Checking…' : 'Check now'}
+            </button>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 interface OllamaState {
   reachable: boolean;
   version?: string;
@@ -80,7 +399,7 @@ interface State {
   saveStatus: string | null;
 }
 
-export function Settings(): JSX.Element {
+export function Settings({ onOpenConnectors }: { onOpenConnectors?: () => void } = {}): JSX.Element {
   const [state, setState] = useState<State>({
     ollama: null,
     workspacesDir: '',
@@ -164,7 +483,7 @@ export function Settings(): JSX.Element {
   }
 
   async function saveOrchestratorModel(): Promise<void> {
-    if (!state.orchestratorModel) return;
+    // '' is a real choice: it means auto-pick an installed model per run.
     await ipc.settings.set('orchestrator_model', state.orchestratorModel);
     setState((s) => ({ ...s, saveStatus: 'Saved.' }));
     setTimeout(() => setState((s) => ({ ...s, saveStatus: null })), 3000);
@@ -216,7 +535,7 @@ export function Settings(): JSX.Element {
         <div className="settings-row">
           <div className="lab">
             Orchestrator model
-            <span className="hint">Picks an agent when you use the global "Ask anything" box</span>
+            <span className="hint">Plans team runs and writes new agents. Auto picks an installed model.</span>
           </div>
           <div className="row gap-2">
             <select
@@ -235,7 +554,6 @@ export function Settings(): JSX.Element {
               type="button"
               className="btn btn-sm btn-primary"
               onClick={() => void saveOrchestratorModel()}
-              disabled={state.orchestratorModel === ''}
             >
               Save
             </button>
@@ -351,7 +669,10 @@ export function Settings(): JSX.Element {
             setTimeout(() => setState((s) => ({ ...s, saveStatus: null })), 2500);
           }}
         />
+        <CustomServerRow />
       </section>
+
+      <WebSearchCard {...(onOpenConnectors ? { onOpenConnectors } : {})} />
 
       <section className="settings-section">
         <div className="head"><h3>Workspaces</h3></div>
@@ -364,14 +685,33 @@ export function Settings(): JSX.Element {
         </div>
       </section>
 
-      <PersonasCard />
+      <SchedulesCard />
 
       <section className="settings-section">
-        <div className="head"><h3>MCP servers</h3></div>
-        <McpServersCard />
+        <div className="head">
+          <h3>MCP servers</h3>
+          <span className="muted text-xs">
+            Presets, the MCP Registry, custom commands and JSON import all live in Connectors.
+          </span>
+        </div>
+        {onOpenConnectors ? (
+          <div>
+            <button type="button" className="btn btn-sm" onClick={onOpenConnectors}>
+              Open Connectors →
+            </button>
+          </div>
+        ) : (
+          <McpServersCard />
+        )}
       </section>
 
       <NotificationsSection />
+
+      <BackgroundSection />
+
+      <VoiceInputSection />
+
+      <UpdatesSection />
 
       <DevToolsSettings />
 
@@ -461,29 +801,6 @@ function OllamaCard({ loading, ollama, onRecheck }: OllamaCardProps): JSX.Elemen
           ) : null}
         </div>
       ) : null}
-    </section>
-  );
-}
-
-interface WorkspaceCardProps {
-  loading: boolean;
-  workspacesDir: string;
-}
-
-function WorkspaceCard({ loading, workspacesDir }: WorkspaceCardProps): JSX.Element {
-  return (
-    <section className="card">
-      <h3 className="text-base font-semibold">Workspaces directory</h3>
-      <p className="text-sm text-[var(--ink-muted)] mt-1 mb-3">
-        Each agent gets a sandboxed folder created inside this directory.
-      </p>
-      {loading ? (
-        <div className="h-5 w-2/3 bg-[var(--surface-2)] rounded animate-pulse" />
-      ) : (
-        <code className="text-sm break-all kbd inline-block max-w-full">
-          {workspacesDir || '—'}
-        </code>
-      )}
     </section>
   );
 }
@@ -599,11 +916,20 @@ function CloudConnector({
     onSaved(`${label} disconnected.`);
   }
 
+  // The test runs against the stored key, so a freshly typed key used to be
+  // "tested" without ever being checked. Save it first when it changed.
   async function runTest(): Promise<void> {
     setTesting(true);
     try {
-      const res = await ipc.cloud.test(provider);
-      setTest(res);
+      const typed = currentKey.trim();
+      const stored = (await ipc.settings.get(settingsKey)).value ?? '';
+      if (typed && typed !== stored) {
+        await ipc.settings.set(settingsKey, typed);
+        onSaved(`${label} key saved.`);
+      }
+      setTest(await ipc.cloud.test(provider));
+    } catch (err) {
+      setTest({ ok: false, models: 0, error: ipcErrorMessage(err) });
     } finally {
       setTesting(false);
     }
@@ -733,41 +1059,69 @@ function CloudConnector({
 }
 
 function OllamaCloudCard({ onSaved }: { onSaved: (msg: string) => void }): JSX.Element {
-  const [status, setStatus] = useState<{ signedIn: boolean; user: string; error?: string } | null>(
-    null,
-  );
+  const [status, setStatus] = useState<OllamaCloudStatusResponse | null>(null);
   const [working, setWorking] = useState(false);
   const [log, setLog] = useState<string | null>(null);
+  const pollRef = useRef<number | null>(null);
 
-  const refresh = async (): Promise<void> => {
+  const refresh = async (): Promise<OllamaCloudStatusResponse | null> => {
     try {
       const r = await ipc.ollama.cloudStatus();
       setStatus(r);
+      return r;
     } catch (err) {
-      setStatus({
-        signedIn: false,
-        user: '',
-        error: err instanceof Error ? err.message : String(err),
-      });
+      setStatus({ signedIn: false, user: '', error: ipcErrorMessage(err) });
+      return null;
     }
   };
 
   useEffect(() => {
     void refresh();
+    return () => {
+      if (pollRef.current !== null) window.clearInterval(pollRef.current);
+    };
   }, []);
+
+  // After handing the user the ollama.com connect page, watch for the account
+  // to appear (up to 3 minutes) instead of claiming success up front.
+  function pollUntilSignedIn(): void {
+    if (pollRef.current !== null) window.clearInterval(pollRef.current);
+    const until = Date.now() + 3 * 60_000;
+    pollRef.current = window.setInterval(() => {
+      void refresh().then((r) => {
+        if (r?.signedIn) {
+          window.clearInterval(pollRef.current!);
+          pollRef.current = null;
+          setLog('Signed in. Cloud models can now be pulled from the library below.');
+          onSaved('Signed in to Ollama cloud.');
+        } else if (Date.now() > until) {
+          window.clearInterval(pollRef.current!);
+          pollRef.current = null;
+          setLog('Still not signed in — finish the ollama.com step, then press Sign in again.');
+        }
+      });
+    }, 3000);
+  }
 
   async function signin(): Promise<void> {
     setWorking(true);
-    setLog('Opening browser for Ollama sign-in…');
+    setLog('Starting Ollama sign-in…');
     try {
       const res = await ipc.ollama.cloudSignin();
-      if (res.ok) {
-        setLog('Signed in. Cloud models are now available via `ollama pull`.');
-        onSaved('Signed in to Ollama cloud.');
+      if (res.alreadySignedIn) {
+        setLog('Already signed in.');
+        await refresh();
+      } else if (res.ok && res.url) {
+        setLog('Opened ollama.com in your browser — approve this device there. This updates on its own.');
+        pollUntilSignedIn();
+      } else if (res.ok) {
+        setLog(res.output || 'Sign-in finished.');
         await refresh();
       } else {
         setLog(res.error || 'Sign-in failed.');
       }
+    } catch (err) {
+      setLog(ipcErrorMessage(err));
     } finally {
       setWorking(false);
     }
@@ -858,6 +1212,11 @@ function OllamaCloudCard({ onSaved }: { onSaved: (msg: string) => void }): JSX.E
               {log}
             </div>
           ) : null}
+          {status?.note ? (
+            <div className="text-[11px] muted" aria-live="polite">
+              {status.note}
+            </div>
+          ) : null}
           {status?.error ? (
             <div className="text-[11px]" style={{ color: 'var(--bad)' }}>
               {status.error}
@@ -869,174 +1228,7 @@ function OllamaCloudCard({ onSaved }: { onSaved: (msg: string) => void }): JSX.E
   );
 }
 
-interface Persona {
-  id: string;
-  name: string;
-  description: string;
-  agentIds: string[];
-}
-
-function PersonasCard(): JSX.Element {
-  const [items, setItems] = useState<Persona[]>([]);
-  const [agents, setAgents] = useState<Array<{ id: string; name: string }>>([]);
-  const [draft, setDraft] = useState<Persona>({ id: '', name: '', description: '', agentIds: [] });
-  const [editing, setEditing] = useState<boolean>(false);
-
-  async function refresh(): Promise<void> {
-    const [s, a] = await Promise.all([ipc.settings.get('personas_v1'), ipc.chat.listAgents()]);
-    setAgents(a.agents);
-    try {
-      const parsed = s.value ? (JSON.parse(s.value) as Persona[]) : [];
-      setItems(Array.isArray(parsed) ? parsed : []);
-    } catch {
-      setItems([]);
-    }
-  }
-
-  useEffect(() => {
-    void refresh();
-  }, []);
-
-  async function persist(next: Persona[]): Promise<void> {
-    setItems(next);
-    await ipc.settings.set('personas_v1', JSON.stringify(next));
-  }
-
-  async function save(): Promise<void> {
-    if (draft.name.trim().length === 0 || draft.agentIds.length === 0) return;
-    const id = draft.id || crypto.randomUUID();
-    const row: Persona = { ...draft, id };
-    const next = items.some((p) => p.id === id)
-      ? items.map((p) => (p.id === id ? row : p))
-      : [...items, row];
-    await persist(next);
-    setDraft({ id: '', name: '', description: '', agentIds: [] });
-    setEditing(false);
-  }
-
-  async function remove(id: string): Promise<void> {
-    await persist(items.filter((p) => p.id !== id));
-  }
-
-  function toggleAgent(id: string): void {
-    setDraft((d) => ({
-      ...d,
-      agentIds: d.agentIds.includes(id) ? d.agentIds.filter((x) => x !== id) : [...d.agentIds, id],
-    }));
-  }
-
-  return (
-    <section className="settings-section">
-      <div className="head">
-        <h3>Agent personas</h3>
-        <span className="muted text-xs">
-          Saved team compositions. Pick a set, launch them together.
-        </span>
-      </div>
-
-      {items.length > 0 ? (
-        <div className="col gap-2 mb-3">
-          {items.map((p) => (
-            <div
-              key={p.id}
-              className="card"
-              style={{ padding: 12, display: 'grid', gridTemplateColumns: '1fr 90px 80px', gap: 10, alignItems: 'center' }}
-            >
-              <div>
-                <div style={{ color: 'var(--ink-strong)', fontWeight: 500 }}>{p.name}</div>
-                <div className="muted text-xs" style={{ marginTop: 2 }}>{p.description || '—'}</div>
-                <div className="row gap-1 mt-2" style={{ flexWrap: 'wrap' }}>
-                  {p.agentIds.map((id) => {
-                    const a = agents.find((x) => x.id === id);
-                    return (
-                      <span key={id} className="pill" style={{ height: 18, padding: '0 7px', fontSize: 10 }}>
-                        <span>{a?.name ?? id.slice(0, 8)}</span>
-                      </span>
-                    );
-                  })}
-                </div>
-              </div>
-              <button
-                type="button"
-                className="btn btn-sm"
-                onClick={() => { setDraft(p); setEditing(true); }}
-              >
-                Edit
-              </button>
-              <button
-                type="button"
-                className="btn btn-sm btn-ghost"
-                style={{ color: 'var(--bad)' }}
-                onClick={() => void remove(p.id)}
-              >
-                Remove
-              </button>
-            </div>
-          ))}
-        </div>
-      ) : null}
-
-      {editing ? (
-        <div className="settings-row" style={{ alignItems: 'start' }}>
-          <div className="lab">
-            {draft.id ? 'Edit persona' : 'New persona'}
-            <span className="hint">Group agents that work well together.</span>
-          </div>
-          <div className="col gap-2">
-            <input
-              className="field"
-              placeholder="Persona name — e.g. Design Review Crew"
-              value={draft.name}
-              onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
-            />
-            <input
-              className="field"
-              placeholder="Short description"
-              value={draft.description}
-              onChange={(e) => setDraft((d) => ({ ...d, description: e.target.value }))}
-            />
-            <div
-              className="row gap-1"
-              style={{ flexWrap: 'wrap', maxHeight: 180, overflowY: 'auto', padding: 6, border: '1px solid var(--border)', borderRadius: 6 }}
-            >
-              {agents.map((a) => {
-                const on = draft.agentIds.includes(a.id);
-                return (
-                  <button
-                    key={a.id}
-                    type="button"
-                    className={'btn btn-sm ' + (on ? '' : 'btn-ghost')}
-                    onClick={() => toggleAgent(a.id)}
-                  >
-                    {a.name}
-                  </button>
-                );
-              })}
-            </div>
-            <div className="row gap-2">
-              <button type="button" className="btn btn-sm btn-primary" onClick={() => void save()}>
-                Save
-              </button>
-              <button
-                type="button"
-                className="btn btn-sm"
-                onClick={() => { setDraft({ id: '', name: '', description: '', agentIds: [] }); setEditing(false); }}
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : (
-        <button type="button" className="btn btn-sm btn-primary" onClick={() => setEditing(true)}>
-          + New persona
-        </button>
-      )}
-    </section>
-  );
-}
-
-function SchedulesCard(): JSX.Element {
+function SchedulesCard(): JSX.Element | null {
   const [items, setItems] = useState<
     Array<{
       id: string;
@@ -1049,28 +1241,16 @@ function SchedulesCard(): JSX.Element {
     }>
   >([]);
   const [agents, setAgents] = useState<Array<{ id: string; name: string }>>([]);
-  const [agentId, setAgentId] = useState<string>('');
-  const [prompt, setPrompt] = useState<string>('');
-  const [intervalMinutes, setIntervalMinutes] = useState<number>(60);
 
   async function refresh(): Promise<void> {
     const [s, a] = await Promise.all([ipc.schedules.list(), ipc.chat.listAgents()]);
     setItems(s.items);
     setAgents(a.agents);
-    if (!agentId && a.agents.length > 0) setAgentId(a.agents[0]!.id);
   }
 
   useEffect(() => {
     void refresh();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  async function add(): Promise<void> {
-    if (!agentId || prompt.trim().length === 0) return;
-    await ipc.schedules.create({ agentId, prompt: prompt.trim(), intervalMinutes });
-    setPrompt('');
-    void refresh();
-  }
 
   async function remove(id: string): Promise<void> {
     await ipc.schedules.delete(id);
@@ -1082,64 +1262,16 @@ function SchedulesCard(): JSX.Element {
     void refresh();
   }
 
+  // Older scheduler, superseded by Routines. Its jobs still run, so show any
+  // that exist (they used to have no UI at all) and let the user stop them.
+  if (items.length === 0) return null;
   return (
     <section className="settings-section">
       <div className="head">
-        <h3>Scheduled tasks</h3>
+        <h3>Older scheduled tasks</h3>
         <span className="muted text-xs">
-          Recurring runs — pick an agent + prompt + how often. Each run starts a fresh chat.
+          Still running in the background. Create new recurring runs in Routines.
         </span>
-      </div>
-      <div className="settings-row" style={{ alignItems: 'start' }}>
-        <div className="lab">
-          New schedule
-          <span className="hint">Runs in the background while the app is open.</span>
-        </div>
-        <div className="col gap-2">
-          <div className="row gap-2">
-            <select
-              className="field"
-              value={agentId}
-              onChange={(e) => setAgentId(e.target.value)}
-              style={{ flex: 1 }}
-            >
-              {agents.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                </option>
-              ))}
-            </select>
-            <input
-              type="number"
-              className="field"
-              value={intervalMinutes}
-              min={1}
-              max={60 * 24 * 30}
-              onChange={(e) => setIntervalMinutes(Number(e.target.value) || 60)}
-              style={{ width: 90 }}
-              title="Interval in minutes"
-            />
-            <span className="muted text-xs" style={{ alignSelf: 'center' }}>
-              min
-            </span>
-          </div>
-          <input
-            className="field"
-            placeholder="Prompt — what should the agent do each run?"
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-          />
-          <div>
-            <button
-              type="button"
-              className="btn btn-sm btn-primary"
-              onClick={() => void add()}
-              disabled={prompt.trim().length === 0 || !agentId}
-            >
-              Schedule
-            </button>
-          </div>
-        </div>
       </div>
 
       {items.length > 0 ? (

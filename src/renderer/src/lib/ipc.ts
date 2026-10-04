@@ -117,7 +117,7 @@ interface FlowstateApi {
     subscribeToStream: (
       streamId: string,
       onEvent: (event: unknown) => void,
-      onEnd: (payload: { reason: string }) => void,
+      onEnd: (payload: { reason: string; error?: string }) => void,
     ) => () => void;
     listModels: () => Promise<ChatListModelsResponse>;
     createAgent: (input: ChatCreateAgentRequest) => Promise<ChatCreateAgentResponse>;
@@ -162,6 +162,14 @@ interface FlowstateApi {
     list: () => Promise<McpListResponse>;
     save: (servers: McpServerDto[]) => Promise<{ ok: boolean }>;
     test: (server: McpServerDto) => Promise<McpTestResultDto>;
+    /** Search the official MCP Registry (latest versions, installable ones only). */
+    registrySearch: (
+      query: string,
+    ) => Promise<{ entries: import('@shared/mcp-registry').RegistryEntryDto[]; error?: string }>;
+    /** Tools on connected MCP servers, for Settings → Web search. */
+    webSearchTools: () => Promise<{ tools: import('@shared/ipc-channels').WebSearchMcpToolDto[] }>;
+    /** One real search with the saved web search settings. */
+    webSearchTest: (query?: string) => Promise<import('@shared/ipc-channels').WebSearchTestResponse>;
     subscribeStatus: (cb: (payload: McpStatusBroadcast) => void) => () => void;
   };
   plugins: {
@@ -178,13 +186,36 @@ interface FlowstateApi {
     setHooksConsent: (id: string, consent: boolean) => Promise<{ ok: boolean }>;
     listSkills: () => Promise<PluginsListSkillsResponse>;
     getAgentSkills: (agentId: string) => Promise<{ names: string[] | null }>;
-    setAgentSkills: (agentId: string, names: string[]) => Promise<{ ok: boolean }>;
+    /** null lifts the restriction (every enabled skill). */
+    setAgentSkills: (agentId: string, names: string[] | null) => Promise<{ ok: boolean }>;
     importAgents: (id: string) => Promise<{ ok: boolean; count: number }>;
+    /** owner/repo[/sub][#ref], git URL, folder, or .zip/.plugin/.skill path. */
+    installFrom: (source: string) => Promise<import('@shared/ipc-channels').PluginInstallFromResponse>;
+    skillSources: () => Promise<{ sources: import('@shared/ipc-channels').PluginSkillSourceDto[] }>;
+    setSkillSource: (id: string, enabled: boolean) => Promise<{ ok: boolean }>;
     subscribeStatus: (cb: (payload: PluginsStatusBroadcast) => void) => () => void;
   };
+  updates: {
+    status: () => Promise<import('@shared/ipc-channels').UpdateStatusDto>;
+    check: () => Promise<import('@shared/ipc-channels').UpdateStatusDto>;
+    /** Restart into a downloaded update. */
+    install: () => Promise<{ ok: boolean }>;
+    onStatus: (cb: (payload: import('@shared/ipc-channels').UpdateStatusDto) => void) => () => void;
+  };
+  approvals: {
+    onRequest: (
+      cb: (payload: import('@shared/ipc-channels').GlobalApprovalRequest) => void,
+    ) => () => void;
+    onResolved: (cb: (payload: { streamId: string; toolCallId: string }) => void) => () => void;
+  };
   terminal: {
-    start: (id: string, cwd: string) => Promise<{ ok: boolean }>;
+    start: (
+      id: string,
+      cwd: string,
+      size?: { cols: number; rows: number },
+    ) => Promise<{ ok: boolean; pty: boolean }>;
     input: (id: string, data: string) => Promise<{ ok: boolean }>;
+    resize: (id: string, cols: number, rows: number) => Promise<{ ok: boolean }>;
     kill: (id: string) => Promise<{ ok: boolean }>;
     onData: (cb: (payload: TerminalDataBroadcast) => void) => () => void;
     onExit: (cb: (payload: TerminalExitBroadcast) => void) => () => void;
@@ -238,7 +269,8 @@ interface FlowstateApi {
     stats: () => Promise<SystemStatsGetResponse>;
   };
   clis: {
-    detect: () => Promise<import('@shared/ipc-channels').ClisDetectResponse>;
+    /** `force` skips the 60 s detection cache (the Re-scan button). */
+    detect: (force?: boolean) => Promise<import('@shared/ipc-channels').ClisDetectResponse>;
     get: () => Promise<import('@shared/ipc-channels').ClisGetResponse>;
     connect: (ids: string[]) => Promise<{ ok: true }>;
   };
@@ -260,8 +292,8 @@ interface FlowstateApi {
     evaluateBudget: (chatId?: string) => Promise<BudgetEvaluateResponse>;
     getBudgetCaps: () => Promise<BudgetGetCapsResponse>;
     setBudgetCaps: (perChatUsd: number, perDayUsd: number) => Promise<{ ok: boolean }>;
-    resolveMentions: (agentId: string, text: string) => Promise<MentionsResolveResponse>;
-    loadProjectContext: (agentId: string) => Promise<ProjectContextLoadResponse>;
+    resolveMentions: (agentId: string, text: string, chatId?: string) => Promise<MentionsResolveResponse>;
+    loadProjectContext: (agentId: string, chatId?: string) => Promise<ProjectContextLoadResponse>;
     preflight: (
       text: string,
       contextChars?: number,
@@ -303,6 +335,45 @@ interface FlowstateApi {
     path: (absolutePath: string) => Promise<{ ok: boolean; error?: string }>;
     vscode: (absolutePath: string) => Promise<{ ok: boolean }>;
     url: (url: string) => Promise<{ ok: boolean }>;
+  };
+  preview: {
+    /** Serve agent HTML from the isolated flowstate-preview: scheme. */
+    register: (html: string) => Promise<{ url: string }>;
+  };
+  /** How strong each model is; no models → the orchestrator (planner) model. */
+  modelStrength: (
+    models?: string[],
+  ) => Promise<{ models: Array<{ model: string; strength: 'cloud' | 'local-large' | 'local-small' }> }>;
+  loginItem: {
+    get: () => Promise<{ supported: boolean; enabled: boolean }>;
+    set: (enabled: boolean) => Promise<{ enabled: boolean }>;
+  };
+  agentLibrary: {
+    list: () => Promise<{ templates: import('@shared/ipc-channels').AgentTemplateDto[] }>;
+    add: (id: string) => Promise<{ agent: import('@shared/chat-types').AgentDto }>;
+  };
+  voice: {
+    /** Transcribe one recorded clip with the configured STT backend. */
+    transcribe: (
+      data: ArrayBuffer,
+      mime: string,
+    ) => Promise<{ text?: string; error?: string; notConfigured?: boolean }>;
+    getTranscriber: () => Promise<{ config: import('@shared/ipc-channels').VoiceTranscriberDto | null }>;
+    saveTranscriber: (cfg: {
+      mode: 'openai' | 'cli';
+      url?: string;
+      apiKey?: string;
+      model?: string;
+      command?: string;
+    }) => Promise<{ ok: boolean }>;
+    testTranscriber: () => Promise<{ ok: boolean; error?: string }>;
+  };
+  dialogs: {
+    pickFolder: (opts?: { title?: string; defaultPath?: string }) => Promise<{ path: string | null }>;
+    pickFile: (opts?: {
+      title?: string;
+      filters?: Array<{ name: string; extensions: string[] }>;
+    }) => Promise<{ path: string | null }>;
   };
   cloud: {
     test: (
@@ -354,42 +425,7 @@ interface FlowstateApi {
     toggle: (id: string, enabled: boolean) =>
       Promise<import('@shared/ipc-channels').RoutinesToggleResponse>;
     runNow: (id: string) => Promise<import('@shared/ipc-channels').RoutinesRunNowResponse>;
-  };
-  zoom: {
-    saveCreds: (creds: {
-      accountId: string;
-      clientId: string;
-      clientSecret: string;
-    }) => Promise<{ ok: boolean }>;
-    test: () => Promise<{ ok: boolean; error?: string }>;
-    record: (req: {
-      meetingId?: string;
-      topic?: string;
-      agentId: string;
-      connectionId: string;
-      model?: string;
-    }) => Promise<import('@shared/ipc-channels').ZoomRecordResponse>;
-    jobs: () => Promise<import('@shared/ipc-channels').ZoomJobsResponse>;
-    openRecording: (path: string) => Promise<{ ok: boolean }>;
-  };
-  capture: {
-    start: (req: {
-      title: string;
-      agentId: string;
-      connectionId: string;
-      model?: string;
-    }) => Promise<import('@shared/ipc-channels').CaptureStartResponse>;
-    chunk: (captureId: string, data: ArrayBuffer) => Promise<{ ok: boolean }>;
-    stop: (captureId: string) => Promise<{ ok: boolean }>;
-    jobs: () => Promise<import('@shared/ipc-channels').CaptureJobsResponse>;
-    saveTranscriber: (cfg: {
-      mode: 'openai' | 'cli';
-      url?: string;
-      apiKey?: string;
-      model?: string;
-      command?: string;
-    }) => Promise<{ ok: boolean }>;
-    testTranscriber: () => Promise<{ ok: boolean; error?: string }>;
+    onFired: (cb: (payload: { id: string; chatId: string }) => void) => () => void;
   };
   business: {
     rpc: <M extends import('@shared/business/api').BizMethod>(

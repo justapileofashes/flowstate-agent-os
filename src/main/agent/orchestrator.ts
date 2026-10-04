@@ -28,6 +28,19 @@ function truncate(s: string, n: number): string {
   return s.length > n ? s.slice(0, n - 1) + '…' : s;
 }
 
+/**
+ * Whole-word tag match. Substring matching scored short tags ('go', 'ai',
+ * 'js') against 'good', 'said', 'json' — enough spurious hits to build a team
+ * out of a prompt about nothing. Lookarounds rather than \b so a tag ending in
+ * a symbol ('c++') still matches.
+ */
+function tagHit(tag: string, text: string): boolean {
+  const t = tag.toLowerCase().trim();
+  if (!t) return false;
+  const esc = t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?<![a-z0-9])${esc}(?![a-z0-9])`, 'i').test(text);
+}
+
 /** Score how relevant an agent is to a user prompt. Higher = better. */
 function scoreAgent(agent: AgentSummary, text: string): number {
   const t = text.toLowerCase();
@@ -35,7 +48,7 @@ function scoreAgent(agent: AgentSummary, text: string): number {
 
   // Specialty tag matches (strong signal).
   for (const tag of agent.specialtyTags) {
-    if (tag && t.includes(tag.toLowerCase())) score += 6;
+    if (tagHit(tag, t)) score += 6;
   }
 
   // Description keywords (weak signal — many short words).
@@ -77,6 +90,12 @@ function scoreAgent(agent: AgentSummary, text: string): number {
   }
 
   return score;
+}
+
+/** Did the text actually name one of this agent's specialties? */
+function hasTagHit(agent: AgentSummary, text: string): boolean {
+  const t = text.toLowerCase();
+  return agent.specialtyTags.some((tag) => tagHit(tag, t));
 }
 
 function fallback(agents: AgentSummary[], reason: string): RoutingDecision {
@@ -123,24 +142,23 @@ export class Orchestrator {
         agentId: top.a.id,
         reasoning: 'No specific keyword match — using first agent.',
         fallback: true,
-        swarm: ranked.slice(0, Math.min(4, agents.length)).map((r) => r.a.id),
+        swarm: [top.a.id],
       };
     }
 
-    // Build a swarm: include any agent within 60% of the top score, capped
-    // at 4 total. This is the "swarm of agents engaged" the renderer uses
-    // to deploy multiple mascots.
+    // Build a swarm: any agent within 60% of the top score that the text
+    // actually names by tag, capped at 4. A swarm makes chat.ts run a team,
+    // so score proximity alone is not enough — otherwise a generic prompt
+    // drags in whoever happens to rank second.
     const threshold = Math.max(1, Math.floor(top.s * 0.6));
     const swarmIds = ranked
-      .filter((r) => r.s >= threshold)
+      .filter((r) => r.s >= threshold && hasTagHit(r.a, trimmed))
       .slice(0, 4)
       .map((r) => r.a.id);
     if (!swarmIds.includes(top.a.id)) swarmIds.unshift(top.a.id);
 
     const reasonParts: string[] = [];
-    const tagHits = top.a.specialtyTags.filter((t) =>
-      trimmed.toLowerCase().includes(t.toLowerCase()),
-    );
+    const tagHits = top.a.specialtyTags.filter((t) => tagHit(t, trimmed));
     if (tagHits.length > 0) reasonParts.push(`matched tags: ${tagHits.join(', ')}`);
     if (swarmIds.length > 1) {
       reasonParts.push(

@@ -1,7 +1,13 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ipc } from './lib/ipc';
 import type { AgentDto } from '@shared/chat-types';
-import type { ChatListRecentChatsResponse } from '@shared/ipc-channels';
+import type {
+  ActiveStreamsBroadcast,
+  ChatListRecentChatsResponse,
+  GlobalApprovalRequest,
+} from '@shared/ipc-channels';
+import { ApprovalModal } from './chat/ApprovalModal';
+import { markApprovalResolved, shouldShowBackgroundApproval } from './lib/local-streams';
 import { Settings } from './screens/Settings';
 import { Chat } from './screens/Chat';
 import { Dashboard } from './screens/Dashboard';
@@ -18,16 +24,15 @@ import brainIcon from './assets/brain-icon.png';
 import flowclawIconV3 from './assets/flowclaw-icon-v3.png';
 import { MascotLayer } from './chat/Mascot';
 import { useAgentLiveStatus } from './chat/useAgentLiveStatus';
-import { useCustomizePrefs } from './lib/CustomizeContext';
+import { useCustomize, useCustomizePrefs } from './lib/CustomizeContext';
 import { CustomizeDrawer } from './chat/CustomizeDrawer';
 import { OnboardingTour } from './chat/OnboardingTour';
 import { ClisOnboardingModal } from './chat/ClisOnboardingModal';
+import { UpdateToast } from './chat/UpdateToast';
 import { AnimatePresence, motion } from 'framer-motion';
-import { RoutingToast, type RoutingToastInfo } from './chat/RoutingToast';
 import { ModelPullerModal } from './chat/ModelPullerModal';
 import { CommandPalette } from './chat/CommandPalette';
 import { AgentPackRow } from './chat/AgentPackRow';
-import { TeamRunModal } from './chat/TeamRunModal';
 import { ShortcutsModal } from './chat/ShortcutsModal';
 import { TitleBar } from './chat/TitleBar';
 import { ChatHistory } from './chat/Sidebar';
@@ -55,14 +60,14 @@ export function App(): JSX.Element {
   const [recentChats, setRecentChats] = useState<RecentChat[]>([]);
   const [view, setView] = useState<View>({ kind: 'settings' });
   const [showPalette, setShowPalette] = useState(false);
-  const [toast, setToast] = useState<RoutingToastInfo | null>(null);
   const [pendingChat, setPendingChat] = useState<{ chatId: string; firstMessage: string } | null>(null);
   const [missingModels, setMissingModels] = useState<string[] | null>(null);
   const [ollamaReachable, setOllamaReachable] = useState<boolean | null>(null);
   const [ollamaStarting, setOllamaStarting] = useState(false);
   const [ollamaStartError, setOllamaStartError] = useState<string | null>(null);
-  const [teamPrompt, setTeamPrompt] = useState<string | null>(null);
   const [streamingChatIds, setStreamingChatIds] = useState<Set<string>>(new Set());
+  const [activeStreams, setActiveStreams] = useState<ActiveStreamsBroadcast['active']>([]);
+  const [bgApprovals, setBgApprovals] = useState<GlobalApprovalRequest[]>([]);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [dashboardKey, setDashboardKey] = useState(0);
   const liveStatus = useAgentLiveStatus();
@@ -80,12 +85,25 @@ export function App(): JSX.Element {
       return null;
     }
   })();
-  const [swarmAgentIds, setSwarmAgentIds] = useState<string[]>([]);
-  // Union streaming agents w/ recent swarm. Streaming agents always
-  // appear; swarm members linger for visual presence.
-  const liveAgentIds = Array.from(new Set<string>([...liveStatus.keys(), ...swarmAgentIds]));
+  // Agents with a live stream — chats, routines and each team-run task.
+  const liveAgentIds = Array.from(liveStatus.keys());
   const [customizeOpen, setCustomizeOpen] = useState(false);
   const prefs = useCustomizePrefs();
+  const { cancel: cancelCustomizeDraft } = useCustomize();
+
+  // Navigating must not leave the Customize overlay covering the new screen:
+  // the sidebar and title switch, the drawer stays up, and the app looks stuck.
+  // Same path as Escape — drop the unsaved draft, then close. The ref keeps
+  // this to real view changes, so opening the drawer doesn't close it again.
+  const lastView = useRef(view);
+  useEffect(() => {
+    if (lastView.current === view) return;
+    lastView.current = view;
+    if (customizeOpen) {
+      cancelCustomizeDraft();
+      setCustomizeOpen(false);
+    }
+  }, [view, customizeOpen, cancelCustomizeDraft]);
 
   const refreshRecentChats = useCallback(async () => {
     try {
@@ -103,26 +121,32 @@ export function App(): JSX.Element {
       text: string,
       reasoning: string,
       fallback: boolean,
-      swarm: string[] = [],
+      _swarm: string[] = [],
       team = false,
     ) => {
-      const agent = agents.find((a) => a.id === agentId);
-      if (!agent) {
-        return;
-      }
-      // RoutingToast intentionally suppressed — routing now happens
-      // instantly and the user lands directly in the chat session.
-      setView({ kind: 'chat', agent, openChatId: chatId });
-      // In team mode the backend already persisted the user prompt + is
-      // running the coordinator in the background. Skip pendingChat so
-      // the renderer doesn't double-send via the single-agent stream.
-      if (!team) setPendingChat({ chatId, firstMessage: text });
-      // Deploy the swarm: mascots of every chosen agent appear on the
-      // chatbar for ~30s, even if only the primary is actually streaming.
-      // Gives the visual impression of "the orchestrator engaged a team".
-      if (swarm.length > 0) setSwarmAgentIds(swarm);
-      setTimeout(() => setSwarmAgentIds([]), 30_000);
-      void refreshRecentChats();
+      void (async () => {
+        let agent = agents.find((a) => a.id === agentId);
+        if (!agent) {
+          // Routed to an agent this window hasn't loaded yet (e.g. just
+          // imported from a plugin) — reload instead of dropping the prompt.
+          try {
+            const { agents: fresh } = await ipc.chat.listAgents();
+            setAgents(fresh);
+            agent = fresh.find((a) => a.id === agentId);
+          } catch {
+            // fall through
+          }
+        }
+        if (!agent) return;
+        // Routing is instant: land directly in the chat session.
+        setView({ kind: 'chat', agent, openChatId: chatId });
+        // In team mode the backend already persisted the user prompt + is
+        // running the coordinator in the background. Skip pendingChat so
+        // the renderer doesn't double-send via the single-agent stream.
+        // (Team agents show up as live via the active-streams broadcast.)
+        if (!team) setPendingChat({ chatId, firstMessage: text });
+        void refreshRecentChats();
+      })();
     },
     [agents, refreshRecentChats],
   );
@@ -176,8 +200,7 @@ export function App(): JSX.Element {
       // Pop-out window: jump straight into the chat we were launched with.
       if (popoutParams) {
         const a =
-          list.find((x) => x.id === popoutParams.agentId) ??
-          list.find((x) => true);
+          list.find((x) => x.id === popoutParams.agentId) ?? list[0];
         if (a) {
           setView({ kind: 'chat', agent: a, openChatId: popoutParams.chatId });
           return;
@@ -221,6 +244,7 @@ export function App(): JSX.Element {
   // stream completes so titles + ordering stay fresh in real time.
   useEffect(() => {
     const unsubscribe = ipc.chat.subscribeToActiveStreams((payload) => {
+      setActiveStreams(payload.active);
       setStreamingChatIds((prev) => {
         const next = new Set(payload.active.map((s) => s.chatId));
         // If something dropped (a stream ended), refresh recent chats.
@@ -233,8 +257,35 @@ export function App(): JSX.Element {
         return next;
       });
     });
-    return unsubscribe;
+    // Background routines open new chats; show them in the sidebar right away.
+    const offRoutine = ipc.routines.onFired(() => void refreshRecentChats());
+    return () => {
+      unsubscribe();
+      offRoutine();
+    };
   }, [refreshRecentChats]);
+
+  // Tool approvals from runs no chat view is watching (team-run tasks,
+  // routines, schedules) used to go nowhere and auto-deny after 5 minutes.
+  useEffect(() => {
+    const offReq = ipc.approvals.onRequest((p) => {
+      // A chat view claims its stream right after send(); give it a beat.
+      setTimeout(() => {
+        if (!shouldShowBackgroundApproval(p.streamId, p.toolCallId)) return;
+        setBgApprovals((q) =>
+          q.some((x) => x.streamId === p.streamId && x.toolCallId === p.toolCallId) ? q : [...q, p],
+        );
+      }, 150);
+    });
+    const offRes = ipc.approvals.onResolved((p) => {
+      markApprovalResolved(p.streamId, p.toolCallId);
+      setBgApprovals((q) => q.filter((x) => !(x.streamId === p.streamId && x.toolCallId === p.toolCallId)));
+    });
+    return () => {
+      offReq();
+      offRes();
+    };
+  }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
@@ -486,9 +537,9 @@ export function App(): JSX.Element {
             transition={TRANSITION_DEFAULT}
           >
             {view.kind === 'settings' ? (
-              <Settings />
+              <Settings onOpenConnectors={() => setView({ kind: 'connectors' })} />
             ) : view.kind === 'models' ? (
-              <Models />
+              <Models onAgentsChanged={() => void refreshAgents()} />
             ) : view.kind === 'brain' ? (
               <Brain />
             ) : view.kind === 'connectors' ? (
@@ -496,7 +547,7 @@ export function App(): JSX.Element {
             ) : view.kind === 'coding-clis' ? (
               <CodingClis />
             ) : view.kind === 'plugins' ? (
-              <Plugins />
+              <Plugins onAgentsChanged={() => void refreshAgents()} />
             ) : view.kind === 'routines' ? (
               <Routines agents={agents} onOpenChat={openChat} />
             ) : view.kind === 'flowclaw' ? (
@@ -516,16 +567,26 @@ export function App(): JSX.Element {
                 onOpenChat={(agent) => openChat(agent)}
                 onAgentsChanged={() => void refreshAgents()}
                 onRouted={handleRouted}
-                onTeamRun={() => {
-                  // Legacy hook — team mode now routes through the regular
-                  // solo flow + chat session. The modal is no longer used.
-                  setTeamPrompt(null);
-                }}
               />
             ) : (
               <Chat
                 agent={view.agent}
                 openChatId={view.openChatId ?? null}
+                activeStreams={activeStreams}
+                onAgentSaved={(saved) => {
+                  void refreshAgents();
+                  setView({
+                    kind: 'chat',
+                    agent: saved,
+                    ...(view.openChatId ? { openChatId: view.openChatId } : {}),
+                  });
+                }}
+                onAgentDeleted={() => {
+                  void refreshAgents();
+                  void refreshRecentChats();
+                  setDashboardKey((k) => k + 1);
+                  setView({ kind: 'dashboard' });
+                }}
                 onChatActivity={onChatActivity}
                 onNav={(target) => setView({ kind: target })}
                 pendingChat={
@@ -555,46 +616,6 @@ export function App(): JSX.Element {
             onOpenAgent={(a) => openChat(a)}
           />
         ) : null}
-        {toast ? (
-          <RoutingToast key="toast" info={toast} onDismiss={() => setToast(null)} />
-        ) : null}
-        {teamPrompt ? (
-          <TeamRunModal
-            key="team-run"
-            prompt={teamPrompt}
-            agents={agents}
-            onClose={() => setTeamPrompt(null)}
-            onSessionCreated={async (agentId, chatId) => {
-              setTeamPrompt(null);
-              const fresh = await refreshAgents();
-              await refreshRecentChats();
-              const agent = fresh.find((a) => a.id === agentId) ?? agents.find((a) => a.id === agentId);
-              if (agent) {
-                openChat(agent, chatId);
-              } else {
-                // fallback: still route to chat shell so user sees session even if
-                // agent metadata not yet fetched
-                openChat(
-                  {
-                    id: agentId,
-                    name: 'Team session',
-                    description: '',
-                    specialtyTags: [],
-                    avatarColor: '#a09a8e',
-                    systemPrompt: '',
-                    model: '',
-                    workspacePath: '',
-                    toolPerms: { shell_enabled: false, delete_enabled: false },
-                    approvalPolicy: 'cautious',
-                    createdAt: 0,
-                    updatedAt: 0,
-                  },
-                  chatId,
-                );
-              }
-            }}
-          />
-        ) : null}
         {showShortcuts ? (
           <ShortcutsModal
             key="shortcuts"
@@ -603,6 +624,23 @@ export function App(): JSX.Element {
               if (dontShow) {
                 void ipc.settings.set('seen_shortcuts_intro', 'true');
               }
+            }}
+          />
+        ) : null}
+        {bgApprovals[0] ? (
+          <ApprovalModal
+            key={`${bgApprovals[0].streamId}:${bgApprovals[0].toolCallId}`}
+            pending={bgApprovals[0]}
+            context={`${agents.find((a) => a.id === bgApprovals[0]!.agentId)?.name ?? 'Agent'} · background run`}
+            onRespond={(decision, reason) => {
+              const a = bgApprovals[0]!;
+              void ipc.chat.respondToApproval({
+                streamId: a.streamId,
+                toolCallId: a.toolCallId,
+                decision,
+                ...(reason ? { reason } : {}),
+              });
+              setBgApprovals((q) => q.slice(1));
             }}
           />
         ) : null}
@@ -629,6 +667,7 @@ export function App(): JSX.Element {
       />
       <OnboardingTour />
       <ClisOnboardingModal />
+      <UpdateToast />
 
       <CustomizeDrawer open={customizeOpen} onClose={() => setCustomizeOpen(false)} />
     </div>

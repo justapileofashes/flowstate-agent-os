@@ -208,6 +208,7 @@ const NODE_LABEL: Record<NodeMessageDto['node'], string> = {
   guard: 'Guard',
   researcher: 'Researcher',
   quant: 'Quant',
+  desk: 'Agent desk',
   risk: 'Risk officer',
   trader: 'Trader',
   logger: 'Logger',

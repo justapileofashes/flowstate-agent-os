@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { SLASH_COMMANDS, applySlashCommand, type NavTarget } from './slash-commands';
 import { ipc } from '../lib/ipc';
+import { ipcErrorMessage } from '../lib/ipc-error';
 import { expandSnippet, snippetVars } from '../lib/snippets-client';
 import { FillInModal, MentionChip, ConvChip } from './ComposerSurfaces';
 import type { AgentDto } from '@shared/chat-types';
@@ -22,6 +23,8 @@ interface Props {
   onNav?: (target: NavTarget) => void;
   agent?: AgentDto;
   chatId?: string;
+  /** The folder this chat works in (per-chat override or the agent's). */
+  workspacePath?: string;
 }
 
 export function Composer({
@@ -32,11 +35,13 @@ export function Composer({
   onNav,
   agent,
   chatId,
+  workspacePath,
 }: Props): JSX.Element {
   const [value, setValue] = useState('');
   const [dragOver, setDragOver] = useState(false);
   const [pastedImages, setPastedImages] = useState<string[]>([]);
   const [listening, setListening] = useState(false);
+  const [voiceNote, setVoiceNote] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const recognitionRef = useRef<unknown>(null);
 
@@ -66,11 +71,12 @@ export function Composer({
     void ipc.devtools.listCommands().then((r) => setCommands(r.commands));
   }, []);
 
+  const workspace = workspacePath || agent?.workspacePath;
   useEffect(() => {
-    if (!agent) return;
-    void ipc.files.list(agent.workspacePath).then((r) => setFiles(r.entries.filter((e) => e.kind === 'file').map((e) => e.name))).catch(() => {});
-    void ipc.devtools.loadProjectContext(agent.id).then(setConv).catch(() => {});
-  }, [agent]);
+    if (!agent || !workspace) return;
+    void ipc.files.list(workspace).then((r) => setFiles(r.entries.filter((e) => e.kind === 'file').map((e) => e.name))).catch(() => {});
+    void ipc.devtools.loadProjectContext(agent.id, chatId).then(setConv).catch(() => {});
+  }, [agent, workspace, chatId]);
 
   useEffect(() => {
     void ipc.devtools.evaluateBudget(chatId).then(setBudget).catch(() => {});
@@ -92,10 +98,10 @@ export function Composer({
     if (!agent) return;
     const id = setTimeout(() => {
       if (!/(^|\s)@\S/.test(value)) { setMentions({ paths: [], contextBlock: '' }); return; }
-      void ipc.devtools.resolveMentions(agent.id, value).then(setMentions).catch(() => {});
+      void ipc.devtools.resolveMentions(agent.id, value, chatId).then(setMentions).catch(() => {});
     }, 300);
     return () => clearTimeout(id);
-  }, [value, agent]);
+  }, [value, agent, chatId]);
 
   useEffect(() => {
     if (value.trim().length === 0) {
@@ -177,62 +183,50 @@ export function Composer({
     setValue(next);
   }
 
-  /** Voice dictation via the Web Speech API. Push-to-talk: click the
-   *  mic to start, click again (or wait for silence) to stop. Recognized
-   *  text appends to the composer value. */
-  function toggleVoice(): void {
-    interface SpeechResult { transcript: string }
-    interface SpeechResultEntry { 0?: SpeechResult; isFinal?: boolean }
-    interface SpeechEvent { results: SpeechResultEntry[]; resultIndex: number }
-    type Recognition = {
-      lang: string;
-      interimResults: boolean;
-      continuous: boolean;
-      onresult: ((e: SpeechEvent) => void) | null;
-      onend: (() => void) | null;
-      onerror: ((e: unknown) => void) | null;
-      start: () => void;
-      stop: () => void;
-    };
-    const W = window as unknown as {
-      SpeechRecognition?: new () => Recognition;
-      webkitSpeechRecognition?: new () => Recognition;
-    };
-    const Ctor = W.SpeechRecognition ?? W.webkitSpeechRecognition;
-    if (!Ctor) {
-      alert('Voice input is not available in this build of Chromium.');
-      return;
-    }
+  /** Voice dictation, push-to-talk: click the mic to record, click again to
+   *  stop; the clip is transcribed by the speech-to-text backend set up in
+   *  Settings → Voice input, and the text appends to the composer.
+   *  (Chromium's Web Speech API has no speech service inside Electron.) */
+  async function toggleVoice(): Promise<void> {
     if (listening) {
-      (recognitionRef.current as Recognition | null)?.stop();
+      (recognitionRef.current as MediaRecorder | null)?.stop();
       return;
     }
-    const rec = new Ctor();
-    rec.lang = navigator.language || 'en-US';
-    rec.interimResults = true;
-    rec.continuous = true;
-    let buffer = '';
-    rec.onresult = (e) => {
-      let finalChunk = '';
-      let interim = '';
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        const r = e.results[i];
-        const txt = r?.[0]?.transcript ?? '';
-        if (r?.isFinal) finalChunk += txt;
-        else interim += txt;
-      }
-      if (finalChunk) buffer += finalChunk;
-      const composed = value + (value && !value.endsWith(' ') ? ' ' : '') + buffer + interim;
-      setValue(composed);
+    setVoiceNote(null);
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch {
+      setVoiceNote('Microphone unavailable or blocked.');
+      return;
+    }
+    const rec = new MediaRecorder(stream);
+    const chunks: Blob[] = [];
+    rec.ondataavailable = (e) => {
+      if (e.data.size > 0) chunks.push(e.data);
     };
-    rec.onend = () => {
+    rec.onstop = () => {
+      stream.getTracks().forEach((t) => t.stop());
       setListening(false);
       recognitionRef.current = null;
-      if (buffer) setValue((v) => v.trim());
-    };
-    rec.onerror = () => {
-      setListening(false);
-      recognitionRef.current = null;
+      void (async () => {
+        const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' });
+        setVoiceNote('Transcribing…');
+        try {
+          const r = await ipc.voice.transcribe(await blob.arrayBuffer(), blob.type);
+          if (r.notConfigured) {
+            setVoiceNote('Voice input needs a speech-to-text backend — set one up in Settings → Voice input.');
+          } else if (r.error) {
+            setVoiceNote(`Transcription failed: ${r.error}`);
+          } else {
+            setVoiceNote(null);
+            if (r.text) setValue((v) => (v && !v.endsWith(' ') ? v + ' ' : v) + r.text);
+            textareaRef.current?.focus();
+          }
+        } catch (err) {
+          setVoiceNote(`Transcription failed: ${ipcErrorMessage(err)}`);
+        }
+      })();
     };
     rec.start();
     recognitionRef.current = rec;
@@ -252,9 +246,8 @@ export function Composer({
       if (!file) continue;
       const reader = new FileReader();
       reader.onload = () => {
-        const dataUrl = String(reader.result);
-        setPastedImages((prev) => [...prev, dataUrl]);
-        setValue((v) => v + (v.length > 0 && !v.endsWith('\n') ? '\n' : '') + `![pasted-image-${Date.now()}](inline)`);
+        // Shown as a thumbnail above the composer; attached on send.
+        setPastedImages((prev) => [...prev, String(reader.result)]);
       };
       reader.readAsDataURL(file);
     }
@@ -317,7 +310,7 @@ export function Composer({
 
   function submit(): void {
     const trimmed = value.trim();
-    if (trimmed.length === 0 || streaming || disabled) return;
+    if ((trimmed.length === 0 && pastedImages.length === 0) || streaming || disabled) return;
     if (budget.level === 'block') return; // hard cap — send disabled
     const { text, command } = applySlashCommand(trimmed);
     if (command?.nav && onNav) {
@@ -326,18 +319,14 @@ export function Composer({
       setPastedImages([]);
       return;
     }
-    // Inline any pasted images as data URLs so vision models can pick them
-    // up directly. Vision-incapable models ignore them but still see the
-    // text part.
+    // Pasted images ride along as markdown data URLs: the chat history shows
+    // them, and the main process turns them into real image inputs for
+    // Ollama vision models (other providers get a note instead of base64).
     // Prepend resolved @file context so the agent sees the file contents.
     const withCtx = mentions.contextBlock ? mentions.contextBlock + text : text;
     const payload =
       pastedImages.length > 0
-        ? withCtx +
-          '\n\n' +
-          pastedImages
-            .map((d, i) => `Attached image ${i + 1}:\n${d.slice(0, 60)}…\n\n![image](${d})`)
-            .join('\n\n')
+        ? [withCtx, ...pastedImages.map((d, i) => `![image ${i + 1}](${d})`)].filter(Boolean).join('\n\n')
         : withCtx;
     onSend(payload);
     void ipc.devtools.pushHistory(trimmed).then((r) => setHistory(r.history)).catch(() => {});
@@ -462,9 +451,9 @@ export function Composer({
         </button>
         <button
           type="button"
-          title={listening ? 'Stop dictation' : 'Voice input (push to talk)'}
+          title={listening ? 'Stop and transcribe' : 'Voice input (click to record, click again to stop)'}
           className={'btn btn-sm ' + (listening ? '' : 'btn-ghost')}
-          onClick={toggleVoice}
+          onClick={() => void toggleVoice()}
           aria-pressed={listening}
         >
           {listening ? (
@@ -491,6 +480,11 @@ export function Composer({
         {history.length > 0 && value === '' ? (
           <span className="dev-hist-hint mono">↑ history</span>
         ) : null}
+        {voiceNote ? (
+          <span className="muted text-xs" role="status" style={{ maxWidth: 360 }}>
+            {voiceNote}
+          </span>
+        ) : null}
         <div style={{ flex: 1 }} />
         {streaming ? (
           <button type="button" onClick={onStop} className="btn btn-sm" aria-label="Stop">
@@ -501,7 +495,7 @@ export function Composer({
             type="button"
             onClick={submit}
             className="btn btn-sm btn-primary"
-            disabled={disabled || value.trim().length === 0 || budget.level === 'block'}
+            disabled={disabled || (value.trim().length === 0 && pastedImages.length === 0) || budget.level === 'block'}
           >
             Send
           </button>

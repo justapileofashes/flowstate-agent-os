@@ -4,7 +4,7 @@ type FetchFn = (input: string, init?: RequestInit) => Promise<Response>;
 
 export class OllamaClient {
   constructor(
-    private readonly host: string,
+    readonly host: string,
     private readonly fetchFn: FetchFn = fetch,
     private readonly timeoutMs: number = 2000,
   ) {}

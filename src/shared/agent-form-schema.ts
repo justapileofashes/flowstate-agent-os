@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { toolPermsSchema } from './tool-groups';
 
 export const agentFormSchema = z.object({
   name: z.string().trim().min(1).max(60),
@@ -7,10 +8,7 @@ export const agentFormSchema = z.object({
   systemPrompt: z.string().min(1).max(4000),
   model: z.string().min(1),
   avatarColor: z.string().regex(/^#[0-9a-fA-F]{6}$/),
-  toolPerms: z.object({
-    shell_enabled: z.boolean(),
-    delete_enabled: z.boolean(),
-  }),
+  toolPerms: toolPermsSchema,
   approvalPolicy: z.enum(['cautious', 'trusting', 'yolo']),
 });
 

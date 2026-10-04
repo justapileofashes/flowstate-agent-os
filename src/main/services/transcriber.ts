@@ -1,4 +1,4 @@
-// Pluggable speech-to-text for webinar captures. Two backends: any
+// Pluggable speech-to-text for composer voice input. Two backends: any
 // OpenAI-compatible /v1/audio/transcriptions server (speaches,
 // faster-whisper-server, OpenAI itself) or a user CLI command template.
 import { spawn } from 'node:child_process';
@@ -49,8 +49,13 @@ export class OpenAICompatTranscriber implements Transcriber {
 
   async test(): Promise<{ ok: boolean; error?: string }> {
     try {
-      // Any HTTP response = reachable (some servers 404 /v1/models).
-      await this.fetchImpl(`${this.cfg.url.replace(/\/$/, '')}/v1/models`);
+      const res = await this.fetchImpl(`${this.cfg.url.replace(/\/$/, '')}/v1/models`, {
+        headers: this.cfg.apiKey ? { Authorization: `Bearer ${this.cfg.apiKey}` } : {},
+      });
+      // Some STT servers don't implement /v1/models (404) — still reachable.
+      // An auth failure or server error is not a working transcriber.
+      if (res.status === 401 || res.status === 403) return { ok: false, error: 'API key rejected' };
+      if (res.status >= 500) return { ok: false, error: `server error (HTTP ${res.status})` };
       return { ok: true };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -95,6 +100,8 @@ export class CliTranscriber implements Transcriber {
   }
 }
 
+// Key predates the voice-input rename (it came from the removed Capture
+// appliance); kept so existing saved configs keep working.
 export const TRANSCRIBER_KEY = 'capture_transcriber';
 
 export class TranscriberStore {

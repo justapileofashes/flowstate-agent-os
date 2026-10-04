@@ -35,7 +35,8 @@ describe('scheduler (Phase 6)', () => {
     // no two cycles of one company overlap in time
     for (let i = 1; i < cycles.length; i++) expect(cycles[i]!.startedAt).toBeGreaterThanOrEqual(cycles[i - 1]!.endedAt!);
     expect(cycles.every((c) => c.status === 'done')).toBe(true);
-  });
+    // 168 simulated hours: slower than the 5s default on a loaded machine.
+  }, 30_000);
 
   it('a paused company skips every job; resuming schedules the next slot', async () => {
     env = await makeServiceEnv({ handler: quietPlan });

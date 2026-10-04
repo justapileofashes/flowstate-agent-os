@@ -28,7 +28,9 @@ import { rsi, macd, atr, bollinger, sma, ema, swingLevels, trend } from '@shared
 import { detectPatterns } from '@shared/patterns';
 import { forecastCone } from '@shared/forecast';
 import { buildStockChart } from '@shared/stock-chart';
-import { duckDuckGoSearch } from '@main/services/web-search';
+import { searchWeb } from '@main/services/web-search';
+import { fetchPageDigest } from '@main/services/web-fetch';
+import type { WebSearchToolOutput } from '@shared/web-search-result';
 import type { Range } from '@shared/market-types';
 
 export const MAX_TOOL_OUTPUT_BYTES = 100_000;
@@ -37,6 +39,12 @@ const argsSchemas = {
   read_file: z.object({ path: z.string() }),
   list_dir: z.object({ path: z.string() }),
   write_file: z.object({ path: z.string(), content: z.string() }),
+  edit_file: z.object({
+    path: z.string(),
+    old_string: z.string(),
+    new_string: z.string(),
+    replace_all: z.boolean().optional(),
+  }),
   delete_file: z.object({ path: z.string() }),
   search_files: z.object({
     pattern: z.string(),
@@ -71,6 +79,7 @@ const argsSchemas = {
     query: z.string().min(1).max(200),
     limit: z.number().int().positive().max(10).optional(),
   }),
+  fetch_url: z.object({ url: z.string().min(4).max(2000) }),
   stock_data: z.object({
     symbol: z.string().min(1).max(20),
     range: z.enum(['1m', '3m', '6m', '1y', '2y', '5y', 'max']).optional(),
@@ -128,10 +137,12 @@ function ok(id: string, name: string, content: string): ToolResult {
   return { toolCallId: id, toolName: name, ok: true, content: cap(content) };
 }
 
+const STOPPED = 'Stopped by the user before this tool ran.';
+
 function failure(id: string, name: string, msg: string): ToolResult {
   // Prefix sentinel so renderer can distinguish failure from success after
   // the result is persisted as a tool message (the ok flag is not stored
-  // in chat-repository — only the content string is).
+  // in chat-repository â€” only the content string is).
   const text = msg.startsWith('ERROR:') ? msg : 'ERROR: ' + msg;
   return { toolCallId: id, toolName: name, ok: false, content: cap(text) };
 }
@@ -174,21 +185,26 @@ export class ToolDispatcher {
     return this.marketData;
   }
 
-  async call(toolCallId: string, name: string, rawArgs: unknown): Promise<ToolResult> {
+  async call(
+    toolCallId: string,
+    name: string,
+    rawArgs: unknown,
+    signal?: AbortSignal,
+  ): Promise<ToolResult> {
     const start = Date.now();
 
     // Plugin PreToolUse hooks (consent-gated upstream) can veto a tool call.
     if (this.deps.hooks) {
-      const pre = await this.deps.hooks.fire('PreToolUse', this.hookContext(name));
+      const pre = await this.deps.hooks.fire('PreToolUse', { ...this.hookContext(name), toolInput: rawArgs });
       if (pre.blocked) {
         return failure(toolCallId, name, `Blocked by plugin hook: ${pre.reason ?? 'denied'}`);
       }
     }
 
-    const result = await this.callInner(toolCallId, name, rawArgs);
+    const result = await this.callInner(toolCallId, name, rawArgs, signal);
 
     if (this.deps.hooks) {
-      await this.deps.hooks.fire('PostToolUse', this.hookContext(name));
+      await this.deps.hooks.fire('PostToolUse', { ...this.hookContext(name), toolInput: rawArgs });
     }
     if (this.deps.audit && this.deps.agent) {
       this.deps.audit.toolCall(
@@ -208,14 +224,53 @@ export class ToolDispatcher {
     return result;
   }
 
-  private async callInner(toolCallId: string, name: string, rawArgs: unknown): Promise<ToolResult> {
+  /** Approval policy + constitution. Returns the failure to hand back, or null to run the tool. */
+  private async gateCall(
+    toolCallId: string,
+    name: string,
+    args: unknown,
+    isOverwrite: boolean,
+    signal?: AbortSignal,
+  ): Promise<ToolResult | null> {
+    const gate = this.deps.approvalGate;
+    if (!(gate && this.deps.agent && this.deps.chat && this.deps.streamId)) return null;
+    const decision = await gate.require({
+      streamId: this.deps.streamId,
+      chatId: this.deps.chat.id,
+      agent: this.deps.agent,
+      toolCallId,
+      toolName: name,
+      args,
+      cwd: this.deps.workspaceRoot,
+      isOverwrite,
+      ...(this.deps.constitution ? { constitution: this.deps.constitution } : {}),
+      ...(signal ? { signal } : {}),
+    });
+    // Stop during the approval wait: never run it, even if Allow was clicked after.
+    if (signal?.aborted) return failure(toolCallId, name, STOPPED);
+    if (decision === 'deny') {
+      return failure(toolCallId, name, 'Denied by approval policy or agent constitution.');
+    }
+    return null;
+  }
+
+  private async callInner(
+    toolCallId: string,
+    name: string,
+    rawArgs: unknown,
+    signal?: AbortSignal,
+  ): Promise<ToolResult> {
     // Pre-2.0 prompts call place_trade; it now only proposes (same deterministic pipeline).
-    if (name === 'place_trade') return this.callInner(toolCallId, 'propose_trade', rawArgs);
+    if (name === 'place_trade') return this.callInner(toolCallId, 'propose_trade', rawArgs, signal);
+    // Stop can land while a PreToolUse hook was awaited.
+    if (signal?.aborted) return failure(toolCallId, name, STOPPED);
     // MCP tools (mcp__<server>__<tool>) route through the manager.
     if (name.startsWith('mcp__')) {
       if (!this.deps.mcpManager) {
         return failure(toolCallId, name, 'MCP not configured on this dispatcher');
       }
+      const blocked = await this.gateCall(toolCallId, name, rawArgs, false, signal);
+      if (blocked) return blocked;
       try {
         const res = await this.deps.mcpManager.callTool(name, rawArgs);
         if (res.isError) return failure(toolCallId, name, res.content);
@@ -227,6 +282,16 @@ export class ToolDispatcher {
     if (!isKnownTool(name)) {
       return failure(toolCallId, name, `unknown tool: ${name}`);
     }
+    // Hiding a spec is not enough: a model can emit any tool name (hallucination,
+    // prompt injection) and team runs dispatch as 'yolo'. Enforce the perms here.
+    const perms = this.deps.agent?.toolPerms;
+    if (
+      perms &&
+      ((!perms.shell_enabled && (name === 'run_shell' || name === 'run_code')) ||
+        (!perms.delete_enabled && name === 'delete_file'))
+    ) {
+      return failure(toolCallId, name, `${name} is disabled for this agent.`);
+    }
     const schema = argsSchemas[name];
     const parsed = schema.safeParse(rawArgs);
     if (!parsed.success) {
@@ -236,39 +301,27 @@ export class ToolDispatcher {
       return failure(toolCallId, name, `invalid args: ${detail}`);
     }
 
-    const gate = this.deps.approvalGate;
-    if (gate && this.deps.agent && this.deps.chat && this.deps.streamId) {
-      let isOverwrite = false;
-      if (name === 'write_file') {
-        try {
-          const target = resolveSafe(
-            this.deps.workspaceRoot,
-            (parsed.data as { path: string }).path,
-          );
-          isOverwrite = existsSync(target);
-        } catch {
-          isOverwrite = false;
-        }
-      }
-      const decision = await gate.require({
-        streamId: this.deps.streamId,
-        chatId: this.deps.chat.id,
-        agent: this.deps.agent,
-        toolCallId,
-        toolName: name,
-        args: parsed.data,
-        cwd: this.deps.workspaceRoot,
-        isOverwrite,
-        ...(this.deps.constitution ? { constitution: this.deps.constitution } : {}),
-      });
-      if (decision === 'deny') {
-        return failure(toolCallId, name, 'Denied by approval policy or agent constitution.');
+    let isOverwrite = false;
+    if (name === 'write_file') {
+      try {
+        const target = resolveSafe(
+          this.deps.workspaceRoot,
+          (parsed.data as { path: string }).path,
+        );
+        isOverwrite = existsSync(target);
+      } catch {
+        isOverwrite = false;
       }
     }
+    const blocked = await this.gateCall(toolCallId, name, parsed.data, isOverwrite, signal);
+    if (blocked) return blocked;
 
     // Auto safety checkpoint before destructive changes, so the user can always
-    // roll back via the Snapshots UI. Best-effort — never blocks the tool call.
+    // roll back via the Snapshots UI. Best-effort â€” never blocks the tool call.
     await this.maybeCheckpoint(name, parsed.data);
+    // The snapshot is real I/O; the first destructive tool of a session always
+    // takes one. Stop can land in that window, after approval already returned.
+    if (signal?.aborted) return failure(toolCallId, name, STOPPED);
 
     try {
       switch (name) {
@@ -285,6 +338,11 @@ export class ToolDispatcher {
         case 'write_file': {
           const a = parsed.data as z.infer<typeof argsSchemas.write_file>;
           const result = await this.deps.fileTools.writeFile(a.path, a.content);
+          return ok(toolCallId, name, JSON.stringify(result));
+        }
+        case 'edit_file': {
+          const a = parsed.data as z.infer<typeof argsSchemas.edit_file>;
+          const result = await this.deps.fileTools.editFile(a.path, a.old_string, a.new_string, a.replace_all);
           return ok(toolCallId, name, JSON.stringify(result));
         }
         case 'delete_file': {
@@ -350,14 +408,26 @@ export class ToolDispatcher {
         case 'web_search': {
           const a = parsed.data as z.infer<typeof argsSchemas.web_search>;
           try {
-            const hits = await duckDuckGoSearch(a.query, a.limit ?? 5);
-            return ok(toolCallId, name, JSON.stringify(hits));
+            const res = await searchWeb(a.query, a.limit ?? 5);
+            const out: WebSearchToolOutput = { provider: res.provider, results: res.hits };
+            if (res.note) out.note = res.note;
+            if (res.text) out.text = res.text;
+            return ok(toolCallId, name, JSON.stringify(out));
           } catch (err) {
             return failure(
               toolCallId,
               name,
               err instanceof Error ? err.message : String(err),
             );
+          }
+        }
+        case 'fetch_url': {
+          const a = parsed.data as z.infer<typeof argsSchemas.fetch_url>;
+          try {
+            const page = await fetchPageDigest(a.url, signal ? { signal } : {});
+            return ok(toolCallId, name, JSON.stringify(page));
+          } catch (err) {
+            return failure(toolCallId, name, err instanceof Error ? err.message : String(err));
           }
         }
         case 'stock_data': {
@@ -600,7 +670,7 @@ export class ToolDispatcher {
           }
         }
         case 'design_artifact': {
-          // Artifact is rendered by the renderer from the assistant message —
+          // Artifact is rendered by the renderer from the assistant message â€”
           // this tool exists to make the agent commit to producing the
           // exact fenced output downstream renderers expect. We just echo
           // a confirmation; the next assistant message should embed the
@@ -675,12 +745,12 @@ export class ToolDispatcher {
         { toolName: name, detail: checkpointLabel(name) },
       );
     } catch {
-      // Snapshotting must never block the agent — ignore failures.
+      // Snapshotting must never block the agent â€” ignore failures.
     }
   }
 }
 
-// ── JS sandbox for the run_code tool ───────────────────────────────────────
+// â”€â”€ JS sandbox for the run_code tool â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 interface SandboxResult {
   ok: boolean;
@@ -690,6 +760,10 @@ interface SandboxResult {
   durationMs: number;
 }
 
+// ponytail: node:vm is NOT a security boundary; code run here can reach host
+// globals. Real isolation needs a separate hardened process; deferred. run_code
+// is instead gated behind shell_enabled + an approval prompt, so it is no more
+// privileged than run_shell.
 async function runJavaScriptSandbox(source: string, timeoutMs: number): Promise<SandboxResult> {
   const vm = await import('node:vm');
   const start = Date.now();

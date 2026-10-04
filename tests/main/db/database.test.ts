@@ -48,6 +48,23 @@ describe('openDatabase', () => {
     db.close();
   });
 
+  it('drops license tokens left by old builds (migration 010)', () => {
+    let db = openDatabase(dbPath);
+    // Simulate a database from before migration 010 that still holds tokens.
+    db.prepare('DELETE FROM schema_version WHERE version = 10').run();
+    const put = db.prepare('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)');
+    put.run('license.jwt', 'tok');
+    put.run('license.refreshToken', 'r');
+    put.run('ollama_host', 'http://localhost:11434');
+    db.close();
+
+    db = openDatabase(dbPath);
+    const keys = (db.prepare('SELECT key FROM settings').all() as Array<{ key: string }>).map((r) => r.key);
+    expect(keys).toContain('ollama_host');
+    expect(keys.filter((k) => k.startsWith('license.'))).toEqual([]);
+    db.close();
+  });
+
   it('is idempotent across reopens', () => {
     let db = openDatabase(dbPath);
     db.close();

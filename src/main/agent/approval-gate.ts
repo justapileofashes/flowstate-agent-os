@@ -1,4 +1,4 @@
-import { chatEventChannel } from '@shared/ipc-channels';
+import { CHANNELS, chatEventChannel } from '@shared/ipc-channels';
 import type { ApprovalPolicy, ToolPerms } from '@shared/chat-types';
 import type { AuditLogger } from '@main/services/audit-logger';
 import { evaluateConstitution, type ConstitutionRule } from './constitution';
@@ -20,6 +20,8 @@ export interface ApprovalRequireOpts {
   isOverwrite: boolean;
   /** Per-agent constitution rules, evaluated before the built-in policy. */
   constitution?: ConstitutionRule[];
+  /** The run's abort signal: Stop denies a pending approval. */
+  signal?: AbortSignal;
 }
 
 type Decision = 'allow-once' | 'allow-rest' | 'deny';
@@ -51,7 +53,12 @@ export class ApprovalGate {
   ): boolean {
     if (policy === 'yolo') return false;
     if (toolName === 'run_shell') return true;
+    if (toolName === 'run_code') return true;
+    // MCP tools are arbitrary external actions (send, delete, pay…).
+    if (toolName.startsWith('mcp__')) return true;
     if (toolName === 'delete_file') return true;
+    // An edit always changes an existing file, so cautious agents ask like an overwrite.
+    if (toolName === 'edit_file') return policy === 'cautious';
     if (toolName === 'write_file') {
       if (policy === 'cautious') return isOverwrite;
       return false;
@@ -60,6 +67,7 @@ export class ApprovalGate {
   }
 
   async require(opts: ApprovalRequireOpts): Promise<'allow' | 'deny'> {
+    if (opts.signal?.aborted) return 'deny';
     // Constitution rules win over the built-in policy.
     const verdict =
       opts.constitution && opts.constitution.length
@@ -93,6 +101,7 @@ export class ApprovalGate {
           { agentId: opts.agent.id, chatId: opts.chatId, streamId: opts.streamId },
           { toolName: opts.toolName, decision: 'auto-deny', args: opts.args },
         );
+        this.send(CHANNELS.APPROVAL_RESOLVED, { streamId: opts.streamId, toolCallId: opts.toolCallId });
         resolve('deny');
       }, this.autoDenyMs);
       this.pending.set(key, {
@@ -103,8 +112,25 @@ export class ApprovalGate {
         agentId: opts.agent.id,
         streamId: opts.streamId,
       });
+      // Stop denies whatever is still waiting; resolve() is a no-op once settled.
+      opts.signal?.addEventListener(
+        'abort',
+        () => this.resolve(opts.streamId, opts.toolCallId, 'deny'),
+        { once: true },
+      );
       this.send(chatEventChannel(opts.streamId), {
         type: 'tool-approval-required',
+        toolCallId: opts.toolCallId,
+        toolName: opts.toolName,
+        args: opts.args,
+        cwd: opts.cwd,
+      });
+      // Background runs (team tasks, routines, schedules) have no chat view
+      // subscribed to their stream; the app shell picks these up.
+      this.send(CHANNELS.APPROVAL_REQUEST, {
+        streamId: opts.streamId,
+        chatId: opts.chatId,
+        agentId: opts.agent.id,
         toolCallId: opts.toolCallId,
         toolName: opts.toolName,
         args: opts.args,
@@ -137,6 +163,7 @@ export class ApprovalGate {
       toolCallId,
       decision,
     });
+    this.send(CHANNELS.APPROVAL_RESOLVED, { streamId, toolCallId });
     return true;
   }
 }

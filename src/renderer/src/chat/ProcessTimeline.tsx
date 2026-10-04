@@ -4,6 +4,7 @@
 
 import { useState, type JSX } from 'react';
 import type { ToolCallView } from '../lib/chat-stream-helpers';
+import { parseWebSearchOutput } from '@shared/web-search-result';
 
 interface Props {
   toolCalls: ToolCallView[];
@@ -45,6 +46,7 @@ function describe(call: ToolCallView): StepCopy {
     case 'list_dir':        return { verb: 'Listing',      detail: path ?? 'directory' };
     case 'search_files':    return { verb: 'Searching workspace', detail: query ?? '' };
     case 'web_search':      return { verb: 'Searching the web', detail: query ?? '' };
+    case 'fetch_url':       return { verb: 'Reading page', detail: typeof args['url'] === 'string' ? args['url'] : '' };
     case 'shell':           return { verb: 'Running',      detail: command ?? 'shell command' };
     case 'run_code':        return { verb: 'Running code', detail: source ? source.split('\n')[0]!.slice(0, 50) : '' };
     case 'design_artifact': return { verb: 'Drafting artifact', detail: `${title ?? ''}${language ? ` (${language})` : ''}`.trim() };
@@ -86,6 +88,7 @@ function IconFor({ name }: { name: string }): JSX.Element {
       );
     case 'search_files':
     case 'web_search':
+    case 'fetch_url':
     case 'brain_search':
       return (
         <svg viewBox="0 0 14 14" {...base}>
@@ -148,33 +151,36 @@ function formatArgs(args: unknown): string {
 function formatResult(name: string, content: string): JSX.Element {
   if (!content) return <span style={{ color: 'var(--ink-faint)' }}>(no content)</span>;
   if (name === 'web_search') {
-    try {
-      const hits = JSON.parse(content) as Array<{ title?: string; snippet?: string; url?: string }>;
-      if (Array.isArray(hits)) {
-        return (
-          <ol
-            style={{
-              margin: 0,
-              padding: '4px 0 0 18px',
-              color: 'var(--ink-muted)',
-              fontSize: 11,
-            }}
-          >
-            {hits.slice(0, 8).map((h, i) => (
-              <li key={i} style={{ marginBottom: 4 }}>
-                <span style={{ color: 'var(--ink)', fontWeight: 500 }}>{h.title || h.url}</span>
-                {h.snippet ? (
-                  <div style={{ color: 'var(--ink-muted)', fontSize: 11, marginTop: 2 }}>
-                    {h.snippet.slice(0, 200)}
-                  </div>
-                ) : null}
-              </li>
-            ))}
-          </ol>
-        );
-      }
-    } catch {
-      // fall through to raw
+    // MCP tools may return free text instead of hits — that falls through to raw.
+    const output = parseWebSearchOutput(content);
+    if (output && (output.results.length > 0 || !output.text)) {
+      return (
+        <ol
+          style={{
+            margin: 0,
+            padding: '4px 0 0 18px',
+            color: 'var(--ink-muted)',
+            fontSize: 11,
+          }}
+        >
+          {output.provider ? (
+            <li style={{ listStyle: 'none', marginLeft: -18, marginBottom: 4, color: 'var(--ink-faint)', fontSize: 10 }}>
+              via {output.provider}
+              {output.note ? ` · ${output.note}` : ''}
+            </li>
+          ) : null}
+          {output.results.slice(0, 8).map((h, i) => (
+            <li key={i} style={{ marginBottom: 4 }}>
+              <span style={{ color: 'var(--ink)', fontWeight: 500 }}>{h.title || h.url}</span>
+              {h.snippet ? (
+                <div style={{ color: 'var(--ink-muted)', fontSize: 11, marginTop: 2 }}>
+                  {h.snippet.slice(0, 200)}
+                </div>
+              ) : null}
+            </li>
+          ))}
+        </ol>
+      );
     }
   }
   return (

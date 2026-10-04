@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ipc } from '../lib/ipc';
+import { ipcErrorMessage } from '../lib/ipc-error';
+import { localStreamIds } from '../lib/local-streams';
 import {
   emptyStreaming,
   mergeEvents,
@@ -27,6 +29,8 @@ export interface UseChatStreamResult {
   messages: MessageDto[];
   streamingAssistant: StreamingAssistant | null;
   status: StreamStatus;
+  /** Why the last turn failed (status === 'error'), ready to show the user. */
+  error: string | null;
   pendingApproval: PendingApproval | null;
   tokens: TokenUsage;
   send: (text: string) => Promise<void>;
@@ -44,6 +48,7 @@ export function useChatStream(chatId: string | null): UseChatStreamResult {
   const [messages, setMessages] = useState<MessageDto[]>([]);
   const [streamingAssistant, setStreamingAssistant] = useState<StreamingAssistant | null>(null);
   const [status, setStatus] = useState<StreamStatus>('idle');
+  const [error, setError] = useState<string | null>(null);
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
   const [tokens, setTokens] = useState<TokenUsage>({ promptTokens: 0, completionTokens: 0, total: 0 });
   const streamIdRef = useRef<string | null>(null);
@@ -85,6 +90,7 @@ export function useChatStream(chatId: string | null): UseChatStreamResult {
     // from a prior chat doesn't bleed into the new one.
     setStreamingAssistant(null);
     setStatus('idle');
+    setError(null);
     setPendingApproval(null);
     setTokens({ promptTokens: 0, completionTokens: 0, total: 0 });
     streamIdRef.current = null;
@@ -109,6 +115,8 @@ export function useChatStream(chatId: string | null): UseChatStreamResult {
       stopTimer();
       unsubRef.current?.();
       unsubRef.current = null;
+      // Unmounted mid-stream: let the app shell handle its approvals now.
+      if (streamIdRef.current) localStreamIds.delete(streamIdRef.current);
     };
   }, [stopTimer]);
 
@@ -129,11 +137,25 @@ export function useChatStream(chatId: string | null): UseChatStreamResult {
       setMessages((prev) => [...prev, tempUser]);
       setStreamingAssistant(emptyStreaming());
       setStatus('streaming');
+      setError(null);
       setPendingApproval(null);
       startTimer();
 
-      const { streamId } = await ipc.chat.sendMessage(chatId, text);
+      let streamId: string;
+      try {
+        ({ streamId } = await ipc.chat.sendMessage(chatId, text));
+      } catch (err) {
+        // Without this the chat sat on "streaming" forever.
+        stopTimer();
+        pendingRef.current = [];
+        setStreamingAssistant(null);
+        setStatus('error');
+        setError(ipcErrorMessage(err));
+        void refresh();
+        return;
+      }
       streamIdRef.current = streamId;
+      localStreamIds.add(streamId);
 
       const unsub = ipc.chat.subscribeToStream(
         streamId,
@@ -171,6 +193,7 @@ export function useChatStream(chatId: string | null): UseChatStreamResult {
           flush();
           unsubRef.current = null;
           streamIdRef.current = null;
+          localStreamIds.delete(streamId);
           setPendingApproval(null);
 
           const reason = endPayload.reason;
@@ -179,7 +202,10 @@ export function useChatStream(chatId: string | null): UseChatStreamResult {
           if (reason === 'end') setStatus('idle');
           else if (reason === 'max-tools') setStatus('max-tools');
           else if (reason === 'aborted') setStatus('aborted');
-          else setStatus('error');
+          else {
+            setStatus('error');
+            setError(endPayload.error ?? 'The model failed to respond.');
+          }
         },
       );
       unsubRef.current = unsub;
@@ -212,6 +238,7 @@ export function useChatStream(chatId: string | null): UseChatStreamResult {
     messages,
     streamingAssistant,
     status,
+    error,
     pendingApproval,
     tokens,
     send,

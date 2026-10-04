@@ -1364,9 +1364,9 @@ export function MascotLayer({
           </div>
         );
       })}
-      {/* Team-run task-card mascots: only when explicit task rects are
-          supplied (TeamRunModal hands them in). No other ambient mascots
-          are rendered — only live, currently-streaming agents appear. */}
+      {/* Task-card mascots: only when a host passes explicit task rects
+          (none does since the Team Run modal was retired). No other ambient
+          mascots are rendered — only live, currently-streaming agents appear. */}
       {taskCardRects.length > 0
         ? mascots.map((m) => {
             const fps =

@@ -1,5 +1,6 @@
-import { useState, type KeyboardEvent } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { ipc } from '../lib/ipc';
+import { ipcErrorMessage } from '../lib/ipc-error';
 import { BrandMark } from '../lib/brand-mark';
 
 interface Props {
@@ -12,15 +13,25 @@ interface Props {
     swarm?: string[],
     team?: boolean,
   ) => void;
-  /** Legacy hook from when Team Run lived in its own modal. Kept so the
-   *  host can clear any stale team-prompt state when a route fires. */
-  onTeamRun: (text: string) => void;
+  /** Pre-fill the box (bump `nonce` to re-apply the same text). */
+  seed?: { text: string; nonce: number } | null;
 }
 
-export function GlobalAskBox({ onRouted, onTeamRun }: Props): JSX.Element {
+export function GlobalAskBox({ onRouted, seed }: Props): JSX.Element {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const areaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    if (!seed) return;
+    setText(seed.text);
+    const el = areaRef.current;
+    if (el) {
+      el.focus();
+      requestAnimationFrame(() => el.setSelectionRange(seed.text.length, seed.text.length));
+    }
+  }, [seed]);
 
   function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>): void {
     if (e.key !== 'Enter') return;
@@ -39,9 +50,8 @@ export function GlobalAskBox({ onRouted, onTeamRun }: Props): JSX.Element {
       const res = await ipc.chat.route(trimmed);
       onRouted(res.agentId, res.chatId, trimmed, res.reasoning, res.fallback, res.swarm, res.team);
       setText('');
-      onTeamRun('');
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(ipcErrorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -56,6 +66,7 @@ export function GlobalAskBox({ onRouted, onTeamRun }: Props): JSX.Element {
         <h2 className="text-base font-semibold tracking-tight">Ask anything</h2>
       </div>
       <textarea
+        ref={areaRef}
         value={text}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={onKeyDown}

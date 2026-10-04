@@ -4,7 +4,10 @@
 // user restrict which skills a given agent may use.
 
 import { promises as fs } from 'node:fs';
+import { join } from 'node:path';
 import { parseFrontmatter } from './frontmatter';
+import { readSkillDir } from './plugin-scan';
+import { findSkillDirs } from './plugin-sources';
 import type { SkillEntry } from './plugin-types';
 
 export interface SkillDescription {
@@ -20,19 +23,36 @@ export interface SkillRegistryDeps {
 }
 
 export class SkillRegistry {
+  /** Skills in each agent's workspace `.claude/skills`, per agent id. */
+  private readonly workspace = new Map<string, SkillEntry[]>();
+
   constructor(private readonly deps: SkillRegistryDeps) {}
+
+  /** Re-read an agent's workspace skills (`<workspace>/.claude/skills`, the
+   *  Claude Code project convention). Call before building its prompt. */
+  async refreshWorkspace(agentId: string, workspacePath: string): Promise<void> {
+    const out: SkillEntry[] = [];
+    for (const dir of await findSkillDirs(join(workspacePath, '.claude', 'skills'), 2)) {
+      const s = await readSkillDir(dir, null, 'Workspace');
+      if (s && !out.some((x) => x.name === s.name)) out.push(s);
+    }
+    this.workspace.set(agentId, out);
+  }
 
   /** Skills an agent may use, as {name, description} for the system prompt. */
   descriptions(agentId: string): SkillDescription[] {
     return this.forAgent(agentId).map((s) => ({ name: s.name, description: s.description }));
   }
 
+  /** Workspace skills (always on, they belong to this agent's project) first,
+   *  then global skills filtered by the agent's allowlist. */
   private forAgent(agentId: string): SkillEntry[] {
+    const ws = this.workspace.get(agentId) ?? [];
     const all = this.deps.skills();
     const allow = this.deps.allowlist(agentId);
-    if (!allow) return all;
-    const set = new Set(allow);
-    return all.filter((s) => set.has(s.name));
+    const set = allow ? new Set(allow) : null;
+    const global = all.filter((s) => (!set || set.has(s.name)) && !ws.some((w) => w.name === s.name));
+    return [...ws, ...global];
   }
 
   /** Load a skill's full instructions (frontmatter stripped). Throws with the

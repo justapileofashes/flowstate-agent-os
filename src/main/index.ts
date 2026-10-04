@@ -1,7 +1,6 @@
 import {
   app,
   BrowserWindow,
-  desktopCapturer,
   dialog,
   ipcMain,
   Menu,
@@ -13,7 +12,7 @@ import {
 import { CHANNELS } from '@shared/ipc-channels';
 import type { Database as DB } from 'better-sqlite3';
 import { join } from 'node:path';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { openDatabase, setHelperWorkspace } from './db/database';
@@ -22,7 +21,9 @@ import { SettingsService } from './services/settings-service';
 import { SecretStore, electronSafeStorageBackend } from './services/secret-store';
 import { initAutoUpdate } from './services/auto-update';
 import { OllamaClient } from './services/ollama-client';
-import { OllamaProvider } from './agent/ollama-provider';
+import { DEFAULT_MAX_CTX, OllamaProvider } from './agent/ollama-provider';
+import { providerKindForModel } from './agent/provider-router';
+import { contextWindowFor } from './services/token-estimate';
 import { AnthropicProvider } from './agent/anthropic-provider';
 import { OpenAIProvider } from './agent/openai-provider';
 import { GeminiProvider } from './agent/gemini-provider';
@@ -36,7 +37,9 @@ import { Orchestrator } from './agent/orchestrator';
 import { Coordinator } from './agent/coordinator';
 import { AgentGenerator } from './agent/agent-generator';
 import { McpManager } from './services/mcp-manager';
+import { configureWebSearch, readWebSearchConfig } from './services/web-search';
 import { PluginManager } from './services/plugin-manager';
+import { knownSkillSources } from './services/plugin-sources';
 import { SkillRegistry } from './services/skill-registry';
 import { HookRunner } from './agent/hook-runner';
 import { SecondBrain } from './services/second-brain';
@@ -47,13 +50,41 @@ import {
   fetchInstalledModelNames,
 } from './services/agent-model-matcher';
 import { SEED_AGENTS } from './seed-agents';
+import { modelStrength } from './agent/model-strength';
+import { CUSTOM_API_KEY_KEY, CUSTOM_BASE_URL_KEY, CustomOpenAIProvider } from './agent/custom-provider';
+import {
+  HIDDEN_FLAG,
+  getOpenAtLogin,
+  hideOnClose,
+  setOpenAtLogin,
+  setupBackground,
+  showWindow,
+} from './background';
+import { SEED_LEDGER_KEY, cleanupCandidates, createFromTemplate, parseLedger, planSeeding } from './agent-library';
 import { registerIpcHandlers } from './ipc/register';
 import { getConnectedClis } from './ipc/handlers/clis';
 import { decideNotification } from './services/notify';
+import { broadcast } from './util/broadcast';
+import {
+  PREVIEW_SCHEME,
+  installPreviewProtocol,
+  isPreviewUrl,
+  registerPreviewScheme,
+} from './services/preview-protocol';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 
 let db: DB | null = null;
+
+// Without a handler, Electron turns any stray async error in the main process
+// (e.g. a child process 'error' nobody listened for) into a blocking modal
+// dialog. Log instead; startup failures are still surfaced by showFatalDialog.
+process.on('uncaughtException', (err) => {
+  console.error('[main] uncaught exception:', err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[main] unhandled rejection:', reason);
+});
 
 function resolveIcon(): Electron.NativeImage | undefined {
   // Try common locations for the app icon (dev tree + packaged resources).
@@ -93,7 +124,10 @@ function createWindow(opts: { popoutChatId?: string; popoutAgentId?: string } = 
     },
   });
 
-  win.on('ready-to-show', () => win.show());
+  // A login launch (--hidden) starts in the tray.
+  win.on('ready-to-show', () => {
+    if (!startHidden || isPopout) win.show();
+  });
   win.on('maximize', () => win.webContents.send('window:maximized-changed', true));
   win.on('unmaximize', () => win.webContents.send('window:maximized-changed', false));
 
@@ -157,6 +191,7 @@ function installContentSecurityPolicy(): void {
     "img-src 'self' data: https:",
     "font-src 'self' data:",
     `connect-src ${connectSrc}`,
+    `frame-src 'self' ${PREVIEW_SCHEME}:`,
     "object-src 'none'",
     "base-uri 'none'",
     "form-action 'none'",
@@ -164,6 +199,11 @@ function installContentSecurityPolicy(): void {
   ].join('; ');
 
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    // Previews carry their own CSP and must stay frameable.
+    if (isPreviewUrl(details.url)) {
+      callback({ responseHeaders: details.responseHeaders ?? {} });
+      return;
+    }
     callback({
       responseHeaders: {
         ...details.responseHeaders,
@@ -177,8 +217,21 @@ function showFatalDialog(title: string, message: string): void {
   dialog.showErrorBox(title, message);
 }
 
+registerPreviewScheme();
+
+// One running copy per profile: a second launch focuses the first (handled in
+// setupBackground). The lock is per user-data dir, so isolated test profiles
+// (--user-data-dir) still run side by side.
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+  process.exit(0);
+}
+const startHidden = process.argv.includes(HIDDEN_FLAG);
+let mainWindow: BrowserWindow | null = null;
+
 app.whenReady().then(async () => {
   installContentSecurityPolicy();
+  installPreviewProtocol();
   initAutoUpdate();
   try {
     db = openDatabase(databasePath());
@@ -193,20 +246,7 @@ app.whenReady().then(async () => {
     return;
   }
 
-  // System-audio loopback: makes renderer getDisplayMedia({audio:true}) yield
-  // desktop audio on Windows (Electron 33+). Used by the webinar Capture card.
-  session.defaultSession.setDisplayMediaRequestHandler(
-    (_request, callback) => {
-      desktopCapturer.getSources({ types: ['screen'] }).then((sources) => {
-        const first = sources[0];
-        if (first) callback({ video: first, audio: 'loopback' });
-        else callback({});
-      });
-    },
-    { useSystemPicker: false },
-  );
-
-  // Encrypt secret settings (API keys, license tokens) at rest via the OS
+  // Encrypt secret settings (API keys, broker keys) at rest via the OS
   // keychain so the SQLite file never holds them in plaintext.
   const secretStore = new SecretStore(electronSafeStorageBackend());
   const settings = new SettingsService(db, secretStore);
@@ -226,7 +266,10 @@ app.whenReady().then(async () => {
 
   const ollamaHost = settings.get('ollama_host') ?? 'http://localhost:11434';
   const ollamaClient = new OllamaClient(ollamaHost);
-  const ollamaProviderInstance = new OllamaProvider(ollamaHost);
+  const ollamaProviderInstance = new OllamaProvider(ollamaHost, fetch, () => {
+    const n = Number(settings.get('ollama_max_ctx'));
+    return Number.isFinite(n) && n >= 4096 ? n : DEFAULT_MAX_CTX;
+  });
   const anthropicProvider = new AnthropicProvider(() => settings.get('anthropic_api_key') ?? '');
   const openaiProvider = new OpenAIProvider(() => settings.get('openai_api_key') ?? '');
   const geminiProvider = new GeminiProvider(() => settings.get('gemini_api_key') ?? '');
@@ -262,36 +305,54 @@ app.whenReady().then(async () => {
     groq: groqProvider,
     mistral: mistralProvider,
     xai: xaiProvider,
+    custom: new CustomOpenAIProvider(
+      () => settings.get(CUSTOM_BASE_URL_KEY) ?? '',
+      () => settings.get(CUSTOM_API_KEY_KEY) ?? '',
+    ),
   });
 
   const repo = new ChatRepository(db);
 
-  // Seed extra agents on first run (matched by id; never overwrites).
-  for (const seed of SEED_AGENTS) {
-    if (repo.getAgent(seed.id)) continue;
-    const wsPath = join(workspacesDir, seed.workspaceSlug);
-    try {
-      await mkdir(wsPath, { recursive: true });
-    } catch {
-      // best-effort
+  // Built-in agents: a core set on first run, the rest live in the Agent
+  // Library. The ledger keeps deleted built-ins from coming back.
+  {
+    const agentsNow = repo.listAgents();
+    const plan = planSeeding({
+      templateIds: SEED_AGENTS.map((s) => s.id),
+      existingIds: new Set(agentsNow.map((a) => a.id)),
+      ledger: parseLedger(settings.get(SEED_LEDGER_KEY)),
+    });
+    for (const id of plan.create) {
+      const seed = SEED_AGENTS.find((s) => s.id === id);
+      if (!seed) continue;
+      try {
+        await createFromTemplate(repo, seed, workspacesDir);
+        console.info(`[flowstate] seeded agent ${seed.id}`);
+      } catch (err) {
+        console.warn(`[flowstate] failed to seed ${seed.id}:`, err);
+      }
     }
-    try {
-      repo.createAgent({
-        id: seed.id,
-        name: seed.name,
-        description: seed.description,
-        specialtyTags: seed.specialtyTags,
-        systemPrompt: seed.systemPrompt,
-        model: seed.model,
-        avatarColor: seed.avatarColor,
-        workspacePath: wsPath,
-        toolPerms: seed.toolPerms,
-        approvalPolicy: seed.approvalPolicy,
+    if (plan.upgrade) {
+      // One-time: untouched, unused built-ins go back to the Library.
+      let referenced = new Set<string>();
+      try {
+        const raw = JSON.parse(readFileSync(join(app.getPath('userData'), 'routines.json'), 'utf8')) as unknown;
+        if (Array.isArray(raw)) {
+          referenced = new Set(raw.map((r) => (r as { agentId?: unknown }).agentId).filter((x): x is string => typeof x === 'string'));
+        }
+      } catch {
+        // no routines file
+      }
+      const remove = cleanupCandidates({
+        agents: agentsNow,
+        templates: SEED_AGENTS,
+        chatCounts: new Map(agentsNow.map((a) => [a.id, repo.listChats(a.id).length])),
+        referencedIds: referenced,
       });
-      console.log(`[flowstate] seeded agent ${seed.id}`);
-    } catch (err) {
-      console.warn(`[flowstate] failed to seed ${seed.id}:`, err);
+      for (const id of remove) repo.deleteAgent(id);
+      if (remove.length) console.info(`[flowstate] moved ${remove.length} unused built-in agents to the Agent Library`);
     }
+    settings.set(SEED_LEDGER_KEY, JSON.stringify(plan.ledger));
   }
 
   // Hardware-aware model auto-assignment. For each agent, infer the right
@@ -335,26 +396,22 @@ app.whenReady().then(async () => {
     console.warn('[flowstate] auto-assign failed:', err);
   }
 
+  // Every window gets chat events: a popped-out chat lives in its own window.
   const send = (channel: string, payload: unknown) => {
-    const win = BrowserWindow.getAllWindows()[0];
-    win?.webContents.send(channel, payload);
-    maybeNotify(win, payload);
+    broadcast(channel, payload);
+    maybeNotify(payload);
   };
 
-  // Desktop notification when the user is away from the window (roadmap 2c).
+  // Desktop notification when the user is away from the app (roadmap 2c).
   // Opt-out via the settings KV: notifications_enabled = 'false'.
-  const maybeNotify = (win: BrowserWindow | undefined, payload: unknown) => {
+  const maybeNotify = (payload: unknown) => {
     if (settings.get('notifications_enabled') === 'false') return;
-    if (win && win.isFocused() && !win.isMinimized()) return;
+    if (BrowserWindow.getAllWindows().some((w) => w.isFocused() && !w.isMinimized())) return;
     const content = decideNotification(payload);
     if (!content || !Notification.isSupported()) return;
     const notif = new Notification({ title: content.title, body: content.body });
-    notif.on('click', () => {
-      const w = BrowserWindow.getAllWindows()[0];
-      if (!w) return;
-      if (w.isMinimized()) w.restore();
-      w.focus();
-    });
+    // The main window may be hidden in the tray — bring it back.
+    notif.on('click', () => showWindow(mainWindow ?? BrowserWindow.getAllWindows()[0]));
     notif.show();
   };
 
@@ -362,14 +419,22 @@ app.whenReady().then(async () => {
   const audit = new AuditLogger(auditRepo);
   const approvalGate = new ApprovalGate(send, undefined, audit);
   const mcpManager = new McpManager();
+  // web_search (chat tools, team runs, business agent) follows Settings →
+  // Web search; read per call so a changed provider applies immediately.
+  configureWebSearch({
+    config: () => readWebSearchConfig((k) => settings.get(k)),
+    callMcp: (tool, args) => mcpManager.callTool(tool, args),
+    mcpSchema: (tool) => mcpManager.toolSpecs().find((t) => t.name === tool)?.parameters,
+  });
 
   // Claude Code-format plugins + skills. Installed under userData; also
-  // discovers (read-only) the user's ~/.claude plugins + standalone skills.
+  // discovers (read-only) the user's ~/.claude plugins, and skills from
+  // ~/.claude/skills and other coding agents' folders (toggle per source).
   const claudeHome = join(app.getPath('home'), '.claude');
   const pluginManager = new PluginManager({
     root: join(app.getPath('userData'), 'plugins'),
-    pluginsHome: join(claudeHome, 'plugins'),
-    skillsHome: join(claudeHome, 'skills'),
+    claudeHome,
+    skillSources: knownSkillSources(app.getPath('home')),
   });
   try {
     await pluginManager.load();
@@ -395,6 +460,18 @@ app.whenReady().then(async () => {
   }
 
   const manager = new AgentSessionManager({
+    // History gets ~60% of the window; system prompt, tools and the reply need the rest.
+    compaction: {
+      budget: (model) => {
+        const win = contextWindowFor(model);
+        if (providerKindForModel(model) !== 'ollama') return win ? Math.floor(win * 0.6) : 0;
+        const n = Number(settings.get('ollama_max_ctx'));
+        const maxCtx = Number.isFinite(n) && n >= 4096 ? n : DEFAULT_MAX_CTX;
+        return Math.floor(Math.min(win || maxCtx, maxCtx) * 0.6);
+      },
+      get: (k) => settings.get(k),
+      set: (k, v) => settings.set(k, v),
+    },
     provider,
     repo,
     approvalGate,
@@ -447,9 +524,38 @@ app.whenReady().then(async () => {
   }
   const orchestrator = new Orchestrator(provider, orchestratorModel ?? 'qwen2.5:7b');
 
+  // Read per call: the user can change the model (or install one) while the
+  // app is open, and the startup pick above may be stale or uninstalled.
+  const resolveOrchestratorModel = async (): Promise<string> => {
+    const chosen = settings.get('orchestrator_model');
+    if (chosen) return chosen;
+    try {
+      const installed = await provider.listModels();
+      const pick =
+        ORCHESTRATOR_PREFIXES.map((p) => installed.find((m) => m.name.startsWith(p))).find(
+          Boolean,
+        ) ?? installed[0];
+      if (pick) return pick.name;
+    } catch {
+      // Ollama not reachable — fall through to the default below.
+    }
+    return 'qwen2.5:7b';
+  };
+
+  // Heavy features (team runs, Business, AI Trader desk) ask which model they'd
+  // run on and how strong it is; with no models given, the orchestrator model.
+  ipcMain.handle(CHANNELS.MODELS_STRENGTH, async (_e, raw) => {
+    const asked = (raw as { models?: unknown })?.models;
+    const models =
+      Array.isArray(asked) && asked.length
+        ? asked.filter((m): m is string => typeof m === 'string').slice(0, 20)
+        : [await resolveOrchestratorModel()];
+    return { models: models.map((model) => ({ model, strength: modelStrength(model) })) };
+  });
+
   const coordinator = new Coordinator({
     provider,
-    plannerModel: orchestratorModel ?? 'qwen2.5:7b',
+    plannerModel: resolveOrchestratorModel,
     repo,
     approvalGate,
     mcpManager,
@@ -458,10 +564,7 @@ app.whenReady().then(async () => {
     snapshots,
   });
 
-  const agentGenerator = new AgentGenerator(
-    provider,
-    orchestratorModel ?? 'qwen2.5:7b',
-  );
+  const agentGenerator = new AgentGenerator(provider, resolveOrchestratorModel);
 
   registerIpcHandlers({
     settings,
@@ -512,6 +615,12 @@ app.whenReady().then(async () => {
     return BrowserWindow.fromWebContents(e.sender)?.isMaximized() ?? false;
   });
 
+  ipcMain.handle(CHANNELS.APP_GET_LOGIN_ITEM, () => ({ supported: app.isPackaged, enabled: getOpenAtLogin() }));
+  ipcMain.handle(CHANNELS.APP_SET_LOGIN_ITEM, (_e, raw) => {
+    setOpenAtLogin((raw as { enabled?: unknown })?.enabled === true);
+    return { enabled: getOpenAtLogin() };
+  });
+
   ipcMain.handle(CHANNELS.WINDOW_POP_CHAT, (_e, raw) => {
     const args = raw as { chatId?: string; agentId?: string };
     if (!args?.chatId) return { ok: false };
@@ -522,14 +631,22 @@ app.whenReady().then(async () => {
     return { ok: true };
   });
 
-  createWindow();
+  mainWindow = createWindow();
+  hideOnClose(mainWindow, settings);
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+  });
+  setupBackground({ mainWindow: () => mainWindow, settings, icon: resolveIcon() });
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    if (BrowserWindow.getAllWindows().length === 0) mainWindow = createWindow();
+    else showWindow(mainWindow);
   });
 });
 
 app.on('window-all-closed', () => {
+  // With close-to-tray the main window only hides, so this fires only when the
+  // user really closed it (setting off, or no tray icon available).
   if (process.platform !== 'darwin') app.quit();
 });
 

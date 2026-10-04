@@ -7,6 +7,9 @@ import { motion } from 'framer-motion';
 import { ipc } from '../lib/ipc';
 import type { McpServerDto, McpServerStatusDto, McpTestResultDto } from '@shared/ipc-channels';
 import { BrandLogo } from '../lib/brand-logos';
+import { McpServersCard } from './McpServersCard';
+import { buildServerFromEntry, type RegistryEntryDto } from '@shared/mcp-registry';
+import { parseMcpImport } from '@shared/mcp-import';
 
 interface Preset {
   id: string;
@@ -14,6 +17,8 @@ interface Preset {
   description: string;
   command: string;
   args: (config: Record<string, string>) => string[];
+  /** Custom env mapping; by default ALL-CAPS field keys become env vars. */
+  env?: (config: Record<string, string>) => Record<string, string>;
   fields?: Array<{ key: string; label: string; placeholder: string; type?: 'text' | 'password' }>;
   category: 'files' | 'web' | 'dev' | 'productivity' | 'memory' | 'messaging' | 'education' | 'creative' | '3d';
   docsUrl?: string;
@@ -42,36 +47,28 @@ const PRESETS: Preset[] = [
   {
     id: 'github',
     name: 'GitHub',
-    description: 'Issues, PRs, repos, file contents, commits, code search. Needs a PAT.',
+    description:
+      "GitHub's official MCP server — issues, PRs, repos, code search, Actions. Needs a personal access token.",
     command: 'npx',
-    args: () => ['-y', '@modelcontextprotocol/server-github'],
-    fields: [
-      {
-        key: 'GITHUB_PERSONAL_ACCESS_TOKEN',
-        label: 'GitHub token',
-        placeholder: 'ghp_…',
-        type: 'password',
-      },
-    ],
+    // The old @modelcontextprotocol/server-github package is deprecated; this
+    // talks to GitHub's hosted server. The token stays in env (mcp-remote
+    // expands ${…}), never on the command line.
+    args: () => ['-y', 'mcp-remote', 'https://api.githubcopilot.com/mcp/', '--header', 'Authorization:${GITHUB_AUTH_HEADER}'],
+    env: (c): Record<string, string> =>
+      c.token?.trim() ? { GITHUB_AUTH_HEADER: `Bearer ${c.token.trim()}` } : {},
+    fields: [{ key: 'token', label: 'GitHub token', placeholder: 'ghp_… or github_pat_…', type: 'password' }],
     category: 'dev',
-    docsUrl: 'https://github.com/settings/tokens',
+    docsUrl: 'https://github.com/github/github-mcp-server',
   },
   {
-    id: 'gdrive',
-    name: 'Google Drive',
-    description:
-      'Browse + read Drive files (Docs / Sheets / Slides). OAuth flow runs once on first launch.',
+    id: 'context7',
+    name: 'Context7',
+    description: 'Up-to-date, version-specific library docs and code examples for your agents.',
     command: 'npx',
-    args: () => ['-y', '@modelcontextprotocol/server-gdrive'],
-    fields: [
-      {
-        key: 'GDRIVE_CREDENTIALS_PATH',
-        label: 'OAuth credentials JSON path',
-        placeholder: 'C:\\Users\\you\\gdrive-credentials.json',
-      },
-    ],
-    category: 'files',
-    docsUrl: 'https://developers.google.com/drive/api/quickstart/nodejs',
+    args: () => ['-y', '@upstash/context7-mcp'],
+    fields: [{ key: 'CONTEXT7_API_KEY', label: 'API key (optional, higher limits)', placeholder: 'ctx7sk-…', type: 'password' }],
+    category: 'dev',
+    docsUrl: 'https://github.com/upstash/context7',
   },
   {
     id: 'fetch',
@@ -85,9 +82,9 @@ const PRESETS: Preset[] = [
   {
     id: 'brave-search',
     name: 'Brave Search',
-    description: 'Web search via Brave. Requires API key.',
+    description: "Web, news, image and local search via Brave's official MCP server. Needs an API key (free tier).",
     command: 'npx',
-    args: () => ['-y', '@modelcontextprotocol/server-brave-search'],
+    args: () => ['-y', '@brave/brave-search-mcp-server'],
     fields: [
       {
         key: 'BRAVE_API_KEY',
@@ -97,6 +94,36 @@ const PRESETS: Preset[] = [
       },
     ],
     category: 'web',
+    docsUrl: 'https://brave.com/search/api/',
+  },
+  {
+    id: 'playwright',
+    name: 'Playwright',
+    description: "Microsoft's browser automation MCP — navigate, click, fill forms, read pages and take screenshots.",
+    command: 'npx',
+    args: () => ['-y', '@playwright/mcp@latest'],
+    category: 'web',
+    docsUrl: 'https://github.com/microsoft/playwright-mcp',
+  },
+  {
+    id: 'tavily',
+    name: 'Tavily',
+    description: 'Search + extract built for agents: ranked web results and clean page content. Needs an API key.',
+    command: 'npx',
+    args: () => ['-y', 'tavily-mcp'],
+    fields: [{ key: 'TAVILY_API_KEY', label: 'API key', placeholder: 'tvly-…', type: 'password' }],
+    category: 'web',
+    docsUrl: 'https://docs.tavily.com/documentation/mcp',
+  },
+  {
+    id: 'exa',
+    name: 'Exa',
+    description: 'Neural web search, code search and company research. Needs an API key.',
+    command: 'npx',
+    args: () => ['-y', 'exa-mcp-server'],
+    fields: [{ key: 'EXA_API_KEY', label: 'API key', placeholder: 'exa-…', type: 'password' }],
+    category: 'web',
+    docsUrl: 'https://docs.exa.ai/reference/exa-mcp',
   },
   {
     id: 'memory',
@@ -107,6 +134,15 @@ const PRESETS: Preset[] = [
     category: 'memory',
   },
   {
+    id: 'sequential-thinking',
+    name: 'Sequential thinking',
+    description: 'A structured step-by-step reasoning tool that helps models plan and revise multi-step work.',
+    command: 'npx',
+    args: () => ['-y', '@modelcontextprotocol/server-sequential-thinking'],
+    category: 'memory',
+    docsUrl: 'https://github.com/modelcontextprotocol/servers/tree/main/src/sequentialthinking',
+  },
+  {
     id: 'sqlite',
     name: 'SQLite',
     description: 'Query a SQLite database file.',
@@ -115,14 +151,6 @@ const PRESETS: Preset[] = [
     fields: [{ key: 'path', label: 'Database file', placeholder: 'D:\\data\\app.sqlite' }],
     category: 'dev',
     docsUrl: 'https://github.com/johnnyoshika/mcp-server-sqlite-npx',
-  },
-  {
-    id: 'puppeteer',
-    name: 'Browser (Puppeteer)',
-    description: 'Headless Chromium for screenshots, scraping, form automation.',
-    command: 'npx',
-    args: () => ['-y', '@modelcontextprotocol/server-puppeteer'],
-    category: 'web',
   },
   {
     id: 'time',
@@ -151,24 +179,6 @@ const PRESETS: Preset[] = [
     ],
     category: 'messaging',
     docsUrl: 'https://discord.com/developers/applications',
-  },
-  {
-    id: 'slack',
-    name: 'Slack',
-    description: 'Workspace channels + DMs. Needs xoxb bot token + team id.',
-    command: 'npx',
-    args: () => ['-y', '@modelcontextprotocol/server-slack'],
-    fields: [
-      {
-        key: 'SLACK_BOT_TOKEN',
-        label: 'Bot token',
-        placeholder: 'xoxb-…',
-        type: 'password',
-      },
-      { key: 'SLACK_TEAM_ID', label: 'Team ID', placeholder: 'T01…' },
-    ],
-    category: 'messaging',
-    docsUrl: 'https://api.slack.com/apps',
   },
   {
     id: 'gmail',
@@ -339,7 +349,8 @@ const PRESETS: Preset[] = [
     name: 'Stripe',
     description: 'Payments, customers, invoices via the official Stripe MCP. Needs a secret key.',
     command: 'npx',
-    args: (c) => ['-y', '@stripe/mcp', '--tools=all', `--api-key=${c.STRIPE_SECRET_KEY ?? ''}`],
+    // The key is read from STRIPE_SECRET_KEY in env — keep it off the command line.
+    args: () => ['-y', '@stripe/mcp', '--tools=all'],
     fields: [
       {
         key: 'STRIPE_SECRET_KEY',
@@ -401,7 +412,7 @@ const CATEGORIES: Array<{ id: Preset['category'] | 'all'; label: string }> = [
  *  Install and Test so a passing test reflects exactly what gets installed. */
 function buildServerDto(preset: Preset, config: Record<string, string>): McpServerDto {
   const args = preset.args(config);
-  const env: Record<string, string> = {};
+  const env: Record<string, string> = preset.env ? preset.env(config) : {};
   for (const [k, v] of Object.entries(config)) {
     if (/^[A-Z][A-Z0-9_]*$/.test(k) && v.trim().length > 0) env[k] = v.trim();
   }
@@ -415,6 +426,7 @@ function buildServerDto(preset: Preset, config: Record<string, string>): McpServ
 }
 
 export function Connectors(): JSX.Element {
+  const [tab, setTab] = useState<'catalog' | 'registry' | 'custom'>('catalog');
   const [installed, setInstalled] = useState<McpServerDto[]>([]);
   const [status, setStatus] = useState<McpServerStatusDto[]>([]);
   const [filter, setFilter] = useState<Preset['category'] | 'all'>('all');
@@ -494,6 +506,37 @@ export function Connectors(): JSX.Element {
         </p>
       </motion.header>
 
+      <div className="row gap-2" style={{ flexWrap: 'wrap' }} role="tablist">
+        {(
+          [
+            ['catalog', 'Catalog'],
+            ['registry', 'MCP Registry'],
+            ['custom', `Custom${installed.some((s) => !PRESETS.some((p) => p.id === s.id)) ? ` (${installed.filter((s) => !PRESETS.some((p) => p.id === s.id)).length})` : ''}`],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            aria-selected={tab === id}
+            className={'btn btn-sm ' + (tab === id ? 'btn-primary' : 'btn-ghost')}
+            onClick={() => setTab(id)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'registry' ? <RegistryBrowser installed={installed} onChanged={refresh} /> : null}
+      {tab === 'custom' ? (
+        <div className="col gap-4 mt-4">
+          <PasteJsonImport installed={installed} onChanged={refresh} />
+          <McpServersCard />
+        </div>
+      ) : null}
+
+      {tab === 'catalog' ? (
+      <>
       <input
         type="text"
         value={query}
@@ -586,7 +629,10 @@ export function Connectors(): JSX.Element {
 
       {configFor ? (
         <ConfigDialog
-          preset={configFor}
+          title={configFor.name}
+          description={configFor.description}
+          fields={configFor.fields ?? []}
+          build={(c) => buildServerDto(configFor, c)}
           config={config}
           onChange={setConfig}
           onCancel={() => {
@@ -599,12 +645,24 @@ export function Connectors(): JSX.Element {
           error={error}
         />
       ) : null}
+      </>
+      ) : null}
     </div>
   );
 }
 
+interface DialogField {
+  key: string;
+  label: string;
+  placeholder: string;
+  type?: 'text' | 'password';
+}
+
 function ConfigDialog({
-  preset,
+  title,
+  description,
+  fields,
+  build,
   config,
   onChange,
   onCancel,
@@ -612,7 +670,11 @@ function ConfigDialog({
   saving,
   error,
 }: {
-  preset: Preset;
+  title: string;
+  description: string;
+  fields: DialogField[];
+  /** The exact server config Install would save (Test uses the same). */
+  build: (config: Record<string, string>) => McpServerDto;
   config: Record<string, string>;
   onChange: (next: Record<string, string>) => void;
   onCancel: () => void;
@@ -627,7 +689,7 @@ function ConfigDialog({
     setTesting(true);
     setTestResult(null);
     try {
-      const res = await ipc.mcp.test(buildServerDto(preset, config));
+      const res = await ipc.mcp.test(build(config));
       setTestResult(res);
     } catch (err) {
       setTestResult({
@@ -648,14 +710,14 @@ function ConfigDialog({
     >
       <div className="card glass w-full max-w-md" onClick={(e) => e.stopPropagation()}>
         <header className="flex items-center gap-3 mb-3">
-          <div className="cnx-icon"><BrandLogo name={preset.name} size={22} /></div>
+          <div className="cnx-icon"><BrandLogo name={title} size={22} /></div>
           <div className="flex-1 min-w-0">
-            <h2 className="text-base font-semibold">{preset.name}</h2>
-            <p className="text-[11px] text-[var(--ink-muted)]">{preset.description}</p>
+            <h2 className="text-base font-semibold">{title}</h2>
+            <p className="text-[11px] text-[var(--ink-muted)]">{description}</p>
           </div>
         </header>
         <div className="space-y-3">
-          {preset.fields?.map((f) => (
+          {fields.map((f) => (
             <div key={f.key}>
               <label className="block text-[10px] uppercase tracking-[0.12em] text-[var(--ink-faint)] font-semibold mb-1.5">
                 {f.label}
@@ -710,5 +772,227 @@ function ConfigDialog({
         </div>
       </div>
     </div>
+  );
+}
+
+const KIND_LABEL: Record<RegistryEntryDto['plan']['kind'], string> = {
+  npm: 'npm',
+  pypi: 'PyPI · needs uv',
+  oci: 'Docker',
+  remote: 'Remote',
+};
+
+/** Search + one-click install from the official MCP Registry. */
+function RegistryBrowser({
+  installed,
+  onChanged,
+}: {
+  installed: McpServerDto[];
+  onChanged: () => Promise<void>;
+}): JSX.Element {
+  const [query, setQuery] = useState('');
+  const [entries, setEntries] = useState<RegistryEntryDto[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [picked, setPicked] = useState<RegistryEntryDto | null>(null);
+  const [config, setConfig] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const taken = new Set(installed.map((s) => s.id));
+
+  useEffect(() => {
+    let alive = true;
+    const id = setTimeout(() => {
+      setLoading(true);
+      setError(null);
+      void ipc.mcp
+        .registrySearch(query)
+        .then((r) => {
+          if (!alive) return;
+          setEntries(r.entries);
+          if (r.error) setError(r.error);
+        })
+        .catch((e: unknown) => alive && setError(e instanceof Error ? e.message : String(e)))
+        .finally(() => alive && setLoading(false));
+    }, 350);
+    return () => {
+      alive = false;
+      clearTimeout(id);
+    };
+  }, [query]);
+
+  async function install(entry: RegistryEntryDto): Promise<void> {
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const dto = buildServerFromEntry(entry, config, taken);
+      await ipc.mcp.save([...installed, dto]);
+      await onChanged();
+      setPicked(null);
+      setConfig({});
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="mt-4">
+      <input
+        type="text"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="Search the MCP Registry (e.g. postgres, jira, docs, browser)…"
+        className="field text-sm"
+        style={{ maxWidth: 460 }}
+      />
+      <p className="muted text-xs mt-2">
+        Servers published to registry.modelcontextprotocol.io — community-run; check the source before
+        installing. Installed servers show up under Custom.
+      </p>
+      {error ? <div className="text-xs text-[var(--bad)] mt-2">{error}</div> : null}
+      {loading && entries.length === 0 ? <div className="muted text-sm mt-4">Searching…</div> : null}
+      {!loading && !error && entries.length === 0 ? (
+        <div className="muted text-sm mt-4">No installable servers match.</div>
+      ) : null}
+      <div className="cnx-grid mt-4">
+        {entries.map((e) => (
+          <div key={e.name} className="cnx-card">
+            <div className="row gap-3">
+              <div className="cnx-icon">
+                <BrandLogo name={e.title} size={18} />
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <div className="nm">{e.title}</div>
+                <div className="muted text-xs mono" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {KIND_LABEL[e.plan.kind]} · v{e.version}
+                </div>
+              </div>
+            </div>
+            <div className="ds">{e.description || e.name}</div>
+            <div className="row" style={{ marginTop: 4 }}>
+              {e.websiteUrl || e.repositoryUrl ? (
+                <a className="btn btn-sm btn-ghost" href={e.websiteUrl ?? e.repositoryUrl} target="_blank" rel="noreferrer">
+                  Source ↗
+                </a>
+              ) : (
+                <span />
+              )}
+              <div style={{ flex: 1 }} />
+              <button
+                type="button"
+                className="btn btn-sm btn-primary"
+                onClick={() => {
+                  setConfig({});
+                  setSaveError(null);
+                  if (e.fields.length === 0) void install(e);
+                  else setPicked(e);
+                }}
+              >
+                Install
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+      {picked ? (
+        <ConfigDialog
+          title={picked.title}
+          description={picked.description || picked.name}
+          fields={picked.fields.map((f) => ({
+            key: f.key,
+            label: f.label + (f.required ? '' : ' (optional)'),
+            placeholder: f.description.slice(0, 80) || f.defaultValue || '',
+            type: f.secret ? 'password' : 'text',
+          }))}
+          build={(c) => buildServerFromEntry(picked, c, taken)}
+          config={config}
+          onChange={setConfig}
+          onCancel={() => setPicked(null)}
+          onInstall={() => void install(picked)}
+          saving={saving}
+          error={saveError}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+/** Paste a Claude Desktop / .mcp.json / VS Code snippet and import its servers. */
+function PasteJsonImport({
+  installed,
+  onChanged,
+}: {
+  installed: McpServerDto[];
+  onChanged: () => Promise<void>;
+}): JSX.Element {
+  const [text, setText] = useState('');
+  const [result, setResult] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const preview = text.trim() ? parseMcpImport(text, new Set(installed.map((s) => s.id))) : null;
+
+  async function doImport(): Promise<void> {
+    if (!preview || preview.servers.length === 0) return;
+    setBusy(true);
+    try {
+      await ipc.mcp.save([...installed, ...preview.servers]);
+      await onChanged();
+      setResult(
+        `Imported ${preview.servers.length} server${preview.servers.length === 1 ? '' : 's'}` +
+          (preview.skipped.length ? ` · skipped: ${preview.skipped.join('; ')}` : ''),
+      );
+      setText('');
+    } catch (err) {
+      setResult(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="card">
+      <h3 className="text-base font-semibold">Paste JSON</h3>
+      <p className="text-sm text-[var(--ink-muted)] mt-1 mb-3">
+        Paste an MCP config from a README — Claude Desktop <span className="kbd">mcpServers</span>,{' '}
+        <span className="kbd">.mcp.json</span> or VS Code format. Remote (URL) servers run through the
+        mcp-remote bridge.
+      </p>
+      <textarea
+        className="field mono text-xs"
+        rows={6}
+        value={text}
+        onChange={(e) => {
+          setText(e.target.value);
+          setResult(null);
+        }}
+        placeholder={'{\n  "mcpServers": {\n    "playwright": { "command": "npx", "args": ["@playwright/mcp@latest"] }\n  }\n}'}
+      />
+      {preview?.error ? <div className="text-xs text-[var(--bad)] mt-2">{preview.error}</div> : null}
+      {preview && preview.servers.length > 0 ? (
+        <ul className="text-xs mono mt-2 space-y-1">
+          {preview.servers.map((s) => (
+            <li key={s.id}>
+              <span style={{ color: 'var(--ink-strong)' }}>{s.id}</span> — {s.command} {s.args.join(' ')}
+              {s.env ? <span className="muted"> · env: {Object.keys(s.env).join(', ')}</span> : null}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {preview && preview.skipped.length > 0 ? (
+        <div className="text-xs muted mt-1">Skipped: {preview.skipped.join('; ')}</div>
+      ) : null}
+      <div className="row gap-2 mt-3" style={{ alignItems: 'center' }}>
+        <button
+          type="button"
+          className="btn btn-sm btn-primary"
+          disabled={busy || !preview || preview.servers.length === 0}
+          onClick={() => void doImport()}
+        >
+          {busy ? 'Importing…' : `Import${preview?.servers.length ? ` ${preview.servers.length}` : ''}`}
+        </button>
+        {result ? <span className="text-xs muted">{result}</span> : null}
+      </div>
+    </section>
   );
 }

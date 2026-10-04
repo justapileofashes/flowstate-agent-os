@@ -4,6 +4,7 @@ import type {
   AgentDto,
   ChatDto,
   MessageDto,
+  ToolPerms,
 } from '@shared/chat-types';
 import type { ConversationMessage } from '@main/agent/types';
 
@@ -20,7 +21,7 @@ export interface CreateAgentInput {
   systemPrompt: string;
   model: string;
   workspacePath: string;
-  toolPerms: { shell_enabled: boolean; delete_enabled: boolean };
+  toolPerms: ToolPerms;
   approvalPolicy: 'cautious' | 'trusting' | 'yolo';
 }
 
@@ -70,7 +71,7 @@ function toAgent(r: AgentDbRow): AgentRow {
     systemPrompt: r.system_prompt,
     model: r.model,
     workspacePath: r.workspace_path,
-    toolPerms: JSON.parse(r.tool_perms) as { shell_enabled: boolean; delete_enabled: boolean },
+    toolPerms: JSON.parse(r.tool_perms) as ToolPerms,
     approvalPolicy: r.approval_policy as 'cautious' | 'trusting' | 'yolo',
     createdAt: r.created_at,
     updatedAt: r.updated_at,
@@ -298,7 +299,11 @@ export class ChatRepository {
       if (msg.role === 'user') {
         const chat = this.getChatStmt.get(chatId);
         if (chat && chat.title === '') {
-          const title = msg.content.slice(0, 60).trim();
+          // Pasted images are data URLs in the text — never title a chat with base64.
+          const title = msg.content
+            .replace(/!\[[^\]]*\]\(data:[^)]*\)/g, '[image]')
+            .slice(0, 60)
+            .trim();
           if (title.length > 0) {
             this.updateChatTitleStmt.run(title, now, chatId);
             return;

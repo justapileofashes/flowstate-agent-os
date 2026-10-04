@@ -3,6 +3,7 @@
 
 import { randomUUID } from 'node:crypto';
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- raw SQLite rows, mapped per table
 export type Row = Record<string, any>;
 
 export const uid = (): string => randomUUID();

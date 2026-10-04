@@ -74,7 +74,6 @@ export class McpManager extends EventEmitter {
     // Start / update remaining
     for (const cfg of configs) {
       if (!isSafeId(cfg.id)) {
-        // eslint-disable-next-line no-console
         console.warn(`[mcp] skipping server with invalid id: ${cfg.id}`);
         continue;
       }
@@ -90,7 +89,6 @@ export class McpManager extends EventEmitter {
       this.clients.set(cfg.id, client);
       // Fire and forget — start failures show up via the status broadcast
       void client.start().catch((err) => {
-        // eslint-disable-next-line no-console
         console.warn(`[mcp:${cfg.id}] start failed: ${err.message}`);
       });
     }

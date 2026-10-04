@@ -1,28 +1,16 @@
-// Interactive terminal side-panel. Drives a piped OS shell in the main process
-// (see TerminalService) scoped to the agent's workspace. Not a full PTY: no
-// curses/full-screen apps, but commands, cd, and streamed output all work.
+// Interactive terminal side-panel: xterm.js on top of a real pseudo-terminal
+// in the main process (see TerminalService), scoped to the agent's workspace.
+// Full-screen TUIs (Claude Code, Codex, Gemini CLI, …) work because they get a
+// TTY, raw keystrokes and resize events. If the main process had to fall back
+// to a piped shell, keystrokes are line-edited locally and sent on Enter.
 //
-// Visual: Flowstate v2 redesign (.term* classes in styles.css). Streamed bytes
-// are split into line rows so command echoes / errors / system notices can be
-// toned differently.
+// Visual: Flowstate v2 redesign (.term* classes in styles.css).
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { Terminal } from '@xterm/xterm';
+import { FitAddon } from '@xterm/addon-fit';
+import '@xterm/xterm/css/xterm.css';
 import { ipc } from '../lib/ipc';
-
-// Strip ANSI escape sequences so output is readable in plain rows.
-// eslint-disable-next-line no-control-regex
-const ANSI = /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07|\x1b[()][AB012]/g;
-function clean(s: string): string {
-  return s.replace(ANSI, '').replace(/\r(?!\n)/g, '');
-}
-
-type LineKind = 'out' | 'cmd' | 'sys' | 'err' | 'good';
-interface Line {
-  kind: LineKind;
-  text: string;
-}
-
-const MAX_LINES = 4000;
 
 const GLYPH = (
   <svg width="13" height="13" viewBox="0 0 14 14" fill="none" aria-hidden="true">
@@ -37,6 +25,11 @@ const GLYPH = (
   </svg>
 );
 
+function cssVar(name: string, fallback: string): string {
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return v || fallback;
+}
+
 export function TerminalPanel({
   id,
   cwd,
@@ -50,123 +43,160 @@ export function TerminalPanel({
    *  launch a connected coding CLI). */
   initialCommand?: string;
 }): JSX.Element {
-  const [lines, setLines] = useState<Line[]>([
-    { kind: 'sys', text: `Flowstate shell · ${cwd} · piped session` },
-    initialCommand
-      ? { kind: 'sys', text: `Launching ${initialCommand}…` }
-      : { kind: 'sys', text: 'Runs locally on your machine. Type a command below.' },
-  ]);
-  const [pending, setPending] = useState(''); // in-progress (no trailing newline yet)
-  const [input, setInput] = useState('');
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const termRef = useRef<Terminal | null>(null);
+  const [mode, setMode] = useState<'pty' | 'pipe' | null>(null);
   const [exited, setExited] = useState<number | null | undefined>(undefined);
-  const history = useRef<string[]>([]);
-  const histIdx = useRef<number>(-1);
-  const scrollRef = useRef<HTMLDivElement | null>(null);
-  const inputRef = useRef<HTMLInputElement | null>(null);
-
-  const push = useCallback((arr: Line[]): void => {
-    setLines((prev) => {
-      const next = prev.concat(arr);
-      return next.length > MAX_LINES ? next.slice(next.length - MAX_LINES) : next;
-    });
-  }, []);
+  const [generation, setGeneration] = useState(0); // bump to restart the session
 
   useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    const term = new Terminal({
+      fontFamily: 'JetBrains Mono, ui-monospace, Consolas, monospace',
+      fontSize: 12.5,
+      lineHeight: 1.15,
+      cursorBlink: true,
+      scrollback: 5000,
+      allowTransparency: false,
+      theme: {
+        background: '#0a0908',
+        foreground: cssVar('--ink', '#f0ece2'),
+        cursor: cssVar('--accent', '#e8e3d5'),
+        selectionBackground: '#3a352e',
+      },
+    });
+    const fit = new FitAddon();
+    term.loadAddon(fit);
+    term.open(host);
+    termRef.current = term;
+    try {
+      fit.fit();
+    } catch {
+      // host not laid out yet; the ResizeObserver fits it shortly
+    }
+
+    let ptyMode = true;
+    let line = ''; // local line buffer for the piped fallback
+    let alive = true;
+
+    // Ctrl+C copies when text is selected; Ctrl+V pastes (Windows habits).
+    term.attachCustomKeyEventHandler((e) => {
+      if (e.type !== 'keydown' || !e.ctrlKey || e.shiftKey || e.altKey) return true;
+      const k = e.key.toLowerCase();
+      if (k === 'c' && term.hasSelection()) {
+        void navigator.clipboard?.writeText(term.getSelection()).catch(() => {});
+        term.clearSelection();
+        return false;
+      }
+      if (k === 'v') {
+        void navigator.clipboard
+          ?.readText()
+          .then((t) => t && term.paste(t))
+          .catch(() => {});
+        return false;
+      }
+      return true;
+    });
+
+    const input = term.onData((data) => {
+      if (ptyMode) {
+        void ipc.terminal.input(id, data);
+        return;
+      }
+      // Piped shell: no TTY echo, so edit the line locally.
+      for (const ch of data) {
+        if (ch === '\r') {
+          term.write('\r\n');
+          void ipc.terminal.input(id, line + '\r\n');
+          line = '';
+        } else if (ch === '\x7f' || ch === '\b') {
+          if (line.length > 0) {
+            line = line.slice(0, -1);
+            term.write('\b \b');
+          }
+        } else if (ch === '\x03') {
+          term.write('^C\r\n');
+          line = '';
+          void ipc.terminal.input(id, '\x03');
+        } else if (ch >= ' ') {
+          line += ch;
+          term.write(ch);
+        }
+      }
+    });
+
     const offData = ipc.terminal.onData((p) => {
       if (p.id !== id) return;
-      setPending((prevPartial) => {
-        const combined = prevPartial + clean(p.chunk);
-        const parts = combined.split('\n');
-        const tail = parts.pop() ?? '';
-        if (parts.length > 0) push(parts.map((t) => ({ kind: 'out' as const, text: t })));
-        return tail;
-      });
+      term.write(ptyMode ? p.chunk : p.chunk.replace(/\r?\n/g, '\r\n'));
     });
     const offExit = ipc.terminal.onExit((p) => {
       if (p.id !== id) return;
       setExited(p.code);
-      push([{ kind: 'sys', text: `session ended${p.code != null ? ` (code ${p.code})` : ''}` }]);
+      term.write(`\r\n\x1b[2m[session ended${p.code != null ? ` (code ${p.code})` : ''}]\x1b[0m\r\n`);
     });
-    void ipc.terminal.start(id, cwd);
-    if (initialCommand && initialCommand.trim()) {
-      // Give the shell a beat to spawn, then run the launch command.
-      const cmd = initialCommand;
-      setTimeout(() => {
-        push([{ kind: 'cmd', text: cmd }]);
-        void ipc.terminal.input(id, cmd + '\r\n');
-      }, 250);
-    }
+
+    void ipc.terminal.start(id, cwd, { cols: term.cols, rows: term.rows }).then((r) => {
+      if (!alive) return;
+      ptyMode = r.pty;
+      setMode(r.pty ? 'pty' : 'pipe');
+      if (!r.pty) {
+        term.write('\x1b[2m[piped shell: full-screen apps need the real terminal, which failed to load]\x1b[0m\r\n');
+      }
+      if (initialCommand && initialCommand.trim()) {
+        // Give the shell a beat to print its prompt, then run the launch command.
+        setTimeout(() => {
+          if (!alive) return;
+          if (!ptyMode) term.write(initialCommand + '\r\n');
+          void ipc.terminal.input(id, initialCommand + (ptyMode ? '\r' : '\r\n'));
+        }, 400);
+      }
+    });
+
+    const ro = new ResizeObserver(() => {
+      try {
+        fit.fit();
+      } catch {
+        return;
+      }
+      void ipc.terminal.resize(id, term.cols, term.rows);
+    });
+    ro.observe(host);
+    term.focus();
+
     return () => {
+      alive = false;
+      ro.disconnect();
+      input.dispose();
       offData();
       offExit();
+      term.dispose();
+      termRef.current = null;
       void ipc.terminal.kill(id);
     };
+    // initialCommand only matters for the first launch of a session.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, cwd]);
+  }, [id, cwd, generation]);
 
-  // Auto-scroll on new output.
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [lines, pending]);
-
-  const send = (): void => {
-    if (exited !== undefined) return;
-    const cmd = input;
-    push([{ kind: 'cmd', text: cmd }]);
-    void ipc.terminal.input(id, cmd + '\r\n');
-    if (cmd.trim()) history.current.push(cmd);
-    histIdx.current = history.current.length;
-    setInput('');
-  };
-
-  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>): void => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      send();
-    } else if (e.ctrlKey && e.key.toLowerCase() === 'c') {
-      e.preventDefault();
-      void ipc.terminal.input(id, '\x03');
-      push([{ kind: 'err', text: '^C' }]);
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      const h = history.current;
-      if (!h.length) return;
-      histIdx.current = Math.max(0, histIdx.current - 1);
-      setInput(h[histIdx.current] ?? '');
-    } else if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      const h = history.current;
-      histIdx.current = Math.min(h.length, histIdx.current + 1);
-      setInput(h[histIdx.current] ?? '');
-    }
-  };
-
-  const clear = (): void => {
-    setLines([]);
-    setPending('');
-  };
+  const clear = (): void => termRef.current?.clear();
 
   const copyAll = (): void => {
-    const text = lines
-      .map((l) => (l.kind === 'cmd' ? '> ' + l.text : l.text))
-      .concat(pending ? [pending] : [])
-      .join('\n');
-    try {
-      void navigator.clipboard?.writeText(text);
-    } catch {
-      // clipboard unavailable — ignore
+    const term = termRef.current;
+    if (!term) return;
+    let text = term.getSelection();
+    if (!text) {
+      const buf = term.buffer.active;
+      const rows: string[] = [];
+      for (let i = 0; i < buf.length; i++) rows.push(buf.getLine(i)?.translateToString(true) ?? '');
+      text = rows.join('\n').replace(/\n+$/, '');
     }
+    void navigator.clipboard?.writeText(text).catch(() => {});
   };
 
   const restart = (): void => {
     void ipc.terminal.kill(id);
-    setLines([{ kind: 'sys', text: `Flowstate shell · ${cwd} · piped session` }]);
-    setPending('');
     setExited(undefined);
-    setInput('');
-    void ipc.terminal.start(id, cwd);
-    setTimeout(() => inputRef.current?.focus(), 0);
+    setGeneration((g) => g + 1);
   };
 
   return (
@@ -176,16 +206,26 @@ export function TerminalPanel({
         <span className="term-title">Terminal</span>
         <span className="term-cwd">{cwd}</span>
         <div className="term-actions">
-          {exited !== undefined ? (
-            <span className="pill bad">
-              <span className="dot" />
-              <span>exited{exited != null ? ` ${exited}` : ''}</span>
+          {mode === 'pipe' ? (
+            <span className="pill" title="The native terminal module failed to load">
+              <span>piped</span>
             </span>
           ) : null}
-          <button type="button" className="term-ctl" onClick={clear} title="Clear output">
+          {exited !== undefined ? (
+            <>
+              <span className="pill bad">
+                <span className="dot" />
+                <span>exited{exited != null ? ` ${exited}` : ''}</span>
+              </span>
+              <button type="button" className="term-ctl" onClick={restart} title="Start a new session">
+                restart
+              </button>
+            </>
+          ) : null}
+          <button type="button" className="term-ctl" onClick={clear} title="Clear the screen">
             clear
           </button>
-          <button type="button" className="term-ctl" onClick={copyAll} title="Copy all output">
+          <button type="button" className="term-ctl" onClick={copyAll} title="Copy selection or all output">
             copy
           </button>
           <button type="button" className="term-ctl" onClick={onClose} title="Close terminal">
@@ -193,42 +233,7 @@ export function TerminalPanel({
           </button>
         </div>
       </div>
-
-      <div
-        className="term-out scroll"
-        ref={scrollRef}
-        onClick={() => inputRef.current?.focus()}
-      >
-        {lines.map((l, i) => (
-          <div key={i} className={'term-line ' + l.kind}>
-            {l.kind === 'cmd' ? <span className="term-echo">{l.text}</span> : l.text || ' '}
-          </div>
-        ))}
-        {pending ? <div className="term-line out">{pending}</div> : null}
-      </div>
-
-      <div className={'term-input' + (exited !== undefined ? ' is-off' : '')}>
-        <span className="term-prompt">$</span>
-        <input
-          ref={inputRef}
-          className="term-field"
-          value={input}
-          spellCheck={false}
-          autoComplete="off"
-          autoCapitalize="off"
-          disabled={exited !== undefined}
-          placeholder={exited !== undefined ? 'Session ended — restart to run more' : ''}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={onKeyDown}
-          aria-label="Terminal command input"
-          autoFocus
-        />
-        {exited !== undefined ? (
-          <button type="button" className="btn btn-sm" onClick={restart}>
-            Restart
-          </button>
-        ) : null}
-      </div>
+      <div className="term-xterm" ref={hostRef} onClick={() => termRef.current?.focus()} />
     </div>
   );
 }

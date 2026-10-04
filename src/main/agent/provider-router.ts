@@ -11,6 +11,8 @@ import type {
   PullProgress,
 } from './llm-provider';
 import { CATALOG } from '@main/services/model-catalog';
+import { CUSTOM_PREFIX } from './custom-provider';
+import { extractInlineImages, hasInlineImages } from './inline-images';
 
 export type ProviderKind =
   | 'anthropic'
@@ -20,9 +22,11 @@ export type ProviderKind =
   | 'groq'
   | 'mistral'
   | 'xai'
+  | 'custom'
   | 'ollama';
 
 export function providerKindForModel(model: string): ProviderKind {
+  if (model.startsWith(CUSTOM_PREFIX)) return 'custom';
   const entry = CATALOG.find((m) => m.id === model);
   if (entry?.cloud) return entry.cloud;
 
@@ -53,6 +57,8 @@ export interface ProviderRouterOpts {
   groq: LLMProvider;
   mistral: LLMProvider;
   xai: LLMProvider;
+  /** User-configured OpenAI-compatible server (`custom/<model>`). */
+  custom: LLMProvider;
 }
 
 export class ProviderRouter implements LLMProvider {
@@ -64,7 +70,22 @@ export class ProviderRouter implements LLMProvider {
   }
 
   chatStream(opts: ChatStreamOpts): AsyncIterable<ProviderDelta> {
-    return this.pick(opts.model).chatStream(opts);
+    const kind = providerKindForModel(opts.model);
+    // Only the Ollama provider turns pasted images into real image inputs;
+    // don't send the others megabytes of base64 as text.
+    if (kind !== 'ollama' && opts.messages.some((m) => hasInlineImages(m.content))) {
+      opts = {
+        ...opts,
+        messages: opts.messages.map((m) => ({
+          ...m,
+          content: extractInlineImages(
+            m.content,
+            '[image attached — not sent: pasted images currently work with local Ollama vision models]',
+          ).text,
+        })),
+      };
+    }
+    return this.providers[kind].chatStream(opts);
   }
 
   chatOnce(opts: ChatOnceOpts): Promise<ChatOnceResult> {

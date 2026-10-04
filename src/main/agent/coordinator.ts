@@ -11,6 +11,8 @@
 import { randomUUID } from 'node:crypto';
 import type { LLMProvider } from './llm-provider';
 import { AgentRuntime } from './agent-runtime';
+import { describeModelError } from './model-errors';
+import { substituteModel } from './model-fallback';
 import { ToolDispatcher } from './tool-dispatcher';
 import { loadConstitution } from './constitution';
 import { FileTools } from '@main/tools';
@@ -125,7 +127,9 @@ function truncate(s: string, n: number): string {
 
 export interface CoordinatorOpts {
   provider: LLMProvider;
-  plannerModel: string;
+  /** Resolved per run: the orchestrator model is a setting the user can
+   *  change while the app is open. */
+  plannerModel: () => Promise<string>;
   repo: ChatRepository;
   approvalGate: ApprovalGate;
   mcpManager?: McpManager;
@@ -150,6 +154,16 @@ interface RunState {
   signal: AbortSignal;
   emit: (e: TeamEvent) => void;
   controllers: Map<string, TaskController>;
+  /** Write the finished run as its own "Team · …" chat. */
+  persist: boolean;
+}
+
+export interface CoordinatorStartOpts {
+  /**
+   * Set false when the caller already records the run in a chat (the Ask-box
+   * route does), otherwise every team run showed up twice in the sidebar.
+   */
+  persist?: boolean;
 }
 
 export class Coordinator {
@@ -160,6 +174,7 @@ export class Coordinator {
   start(
     userText: string,
     onEvent: (e: TeamEvent) => void,
+    opts: CoordinatorStartOpts = {},
   ): { handle: CoordinatorRunHandle; done: Promise<void> } {
     const runId = randomUUID();
     const aborter = new AbortController();
@@ -167,6 +182,7 @@ export class Coordinator {
       signal: aborter.signal,
       emit: onEvent,
       controllers: new Map(),
+      persist: opts.persist ?? true,
     };
     this.runs.set(runId, state);
 
@@ -214,20 +230,37 @@ export class Coordinator {
     return true;
   }
 
+  /**
+   * Rewrite each agent's model to one Ollama actually has. A team run builds
+   * single-model runtimes with no failover chain, so a seeded agent asking for
+   * a model nobody pulled kills the subtask and then the synthesis. Done once
+   * per run, before planning, so the planner also sees the real models.
+   */
+  private async withInstalledModels(agents: AgentRow[]): Promise<AgentRow[]> {
+    let installed: string[] = [];
+    try {
+      installed = (await this.opts.provider.listModels()).map((m) => m.name);
+    } catch {
+      // Ollama unreachable — substituteModel leaves the names alone.
+    }
+    return agents.map((a) => ({ ...a, model: substituteModel(a.model, installed) }));
+  }
+
   private async execute(runId: string, userText: string, state: RunState): Promise<void> {
     const { signal, emit } = state;
     try {
-      const agents = this.opts.repo.listAgents();
+      const agents = await this.withInstalledModels(this.opts.repo.listAgents());
       if (agents.length === 0) {
         emit({ type: 'run-end', reason: 'error', error: 'No agents available.' });
         return;
       }
 
       // 1. PLAN
+      const plannerModel = await this.opts.plannerModel();
       let planRaw: { text: string };
       try {
         planRaw = await this.opts.provider.chatOnce({
-          model: this.opts.plannerModel,
+          model: plannerModel,
           format: 'json',
           messages: [
             { role: 'system', content: buildPlannerPrompt(agents) },
@@ -238,7 +271,7 @@ export class Coordinator {
         emit({
           type: 'run-end',
           reason: 'error',
-          error: `Planner failed: ${err instanceof Error ? err.message : String(err)}`,
+          error: `Planner failed: ${describeModelError(err instanceof Error ? err.message : String(err), plannerModel)}`,
         });
         return;
       }
@@ -365,16 +398,18 @@ export class Coordinator {
       // Persist as a chat under the synthesizer agent so the team run
       // shows up in the sidebar session list.
       let persistedChatId: string | undefined;
-      try {
-        persistedChatId = this.persistTeamRun(
-          synth.id,
-          userText,
-          plan,
-          taskOutputs,
-          synthesisBuffer,
-        );
-      } catch (err) {
-        console.warn('[flowstate] team-run persist failed:', err);
+      if (state.persist) {
+        try {
+          persistedChatId = this.persistTeamRun(
+            synth.id,
+            userText,
+            plan,
+            taskOutputs,
+            synthesisBuffer,
+          );
+        } catch (err) {
+          console.warn('[flowstate] team-run persist failed:', err);
+        }
       }
 
       emit({
@@ -603,12 +638,6 @@ function formatNudgeMessage(nudges: string[]): string {
 ${list}
 
 When the (updated) task is fully complete, end with ${COMPLETION_TOKEN}.`;
-}
-
-interface RawPlan {
-  summary?: unknown;
-  tasks?: unknown;
-  synthesizer_agent_id?: unknown;
 }
 
 /**

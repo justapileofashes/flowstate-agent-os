@@ -21,7 +21,7 @@ const DETECTORS: Detector[] = [
   // AWS access key id.
   { re: /\bAKIA[0-9A-Z]{16}\b/g, replacement: '<token>' },
   // Bearer / authorization tokens.
-  { re: /\b[Bb]earer\s+[A-Za-z0-9._\-]+/g, replacement: 'Bearer <token>' },
+  { re: /\b[Bb]earer\s+[A-Za-z0-9._-]+/g, replacement: 'Bearer <token>' },
   // key= / token= / secret= / password= / api_key: assignments.
   {
     re: /\b(api[_-]?key|secret|password|passwd|token|access[_-]?token)\b\s*[:=]\s*["']?[^\s"',]+["']?/gi,

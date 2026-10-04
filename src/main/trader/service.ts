@@ -723,6 +723,7 @@ export class TraderService {
   }
 
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- RPC params, validated per method
   private async dispatch(method: TraderMethod, p: Record<string, any>): Promise<unknown> {
     const db = this.db;
     const now = this.now();

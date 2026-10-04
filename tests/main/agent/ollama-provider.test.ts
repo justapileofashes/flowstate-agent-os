@@ -24,6 +24,96 @@ const baseOpts = {
   tools: [],
 };
 
+describe('OllamaProvider.chatStream — image history vs. model capabilities', () => {
+  const imageOpts = {
+    model: 'llama3.1:8b',
+    messages: [
+      { role: 'user' as const, content: 'look ![shot](data:image/png;base64,QUJD)' },
+    ],
+    tools: [],
+  };
+
+  /** Routes /api/show to `capabilities`, /api/chat to a one-line done stream. */
+  function router(show: () => Response) {
+    const bodies: Array<Record<string, unknown>> = [];
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith('/api/show')) return show();
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return new Response(
+        ndjsonStream([JSON.stringify({ message: { content: 'ok' }, done: true })]),
+        { status: 200 },
+      );
+    });
+    return { fetchMock, bodies };
+  }
+
+  const caps = (capabilities: string[]) =>
+    new Response(JSON.stringify({ capabilities }), { status: 200 });
+  const firstMessage = (bodies: Array<Record<string, unknown>>) =>
+    (bodies[0]!['messages'] as Array<Record<string, unknown>>)[0]!;
+
+  it('drops images for a text-only model but keeps the marker', async () => {
+    const { fetchMock, bodies } = router(() => caps(['completion']));
+    const p = new OllamaProvider('http://localhost:11434', fetchMock);
+    await collect(p.chatStream(imageOpts));
+    const msg = firstMessage(bodies);
+    expect(msg['images']).toBeUndefined();
+    expect(msg['content']).toContain('[image attached]');
+  });
+
+  it('keeps images for a vision model', async () => {
+    const { fetchMock, bodies } = router(() => caps(['completion', 'vision']));
+    const p = new OllamaProvider('http://localhost:11434', fetchMock);
+    await collect(p.chatStream({ ...imageOpts, model: 'llava:7b' }));
+    expect(firstMessage(bodies)['images']).toEqual(['QUJD']);
+  });
+
+  it('keeps images when /api/show fails — an unknown model is not downgraded', async () => {
+    const { fetchMock, bodies } = router(() => new Response('nope', { status: 404 }));
+    const p = new OllamaProvider('http://localhost:11434', fetchMock);
+    await collect(p.chatStream(imageOpts));
+    expect(firstMessage(bodies)['images']).toEqual(['QUJD']);
+  });
+
+  it('keeps images when /api/show throws', async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith('/api/show')) throw new Error('ECONNREFUSED');
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return new Response(
+        ndjsonStream([JSON.stringify({ message: { content: 'ok' }, done: true })]),
+        { status: 200 },
+      );
+    });
+    const p = new OllamaProvider('http://localhost:11434', fetchMock);
+    await collect(p.chatStream(imageOpts));
+    expect(firstMessage(bodies)['images']).toEqual(['QUJD']);
+  });
+
+  it('probes /api/show once per model', async () => {
+    let probes = 0;
+    const { fetchMock } = router(() => {
+      probes += 1;
+      return caps(['completion']);
+    });
+    const p = new OllamaProvider('http://localhost:11434', fetchMock);
+    await collect(p.chatStream(imageOpts));
+    await collect(p.chatStream(imageOpts));
+    expect(probes).toBe(1);
+  });
+
+  it('does not probe at all when the turn has no images', async () => {
+    let probes = 0;
+    const { fetchMock } = router(() => {
+      probes += 1;
+      return caps(['completion']);
+    });
+    const p = new OllamaProvider('http://localhost:11434', fetchMock);
+    await collect(p.chatStream(baseOpts));
+    expect(probes).toBe(0);
+  });
+});
+
 describe('OllamaProvider.chatStream', () => {
   it('parses text deltas across chunks and emits done', async () => {
     const fetchMock = vi.fn(async () =>
@@ -108,6 +198,29 @@ describe('OllamaProvider.chatStream', () => {
     await expect(collect(p.chatStream(baseOpts))).rejects.toThrow(/500/);
   });
 
+  it('includes Ollama\'s error body in HTTP failures', async () => {
+    const fetchMock = vi.fn(
+      async () => new Response(JSON.stringify({ error: 'model "nope" not found, try pulling it first' }), { status: 404 }),
+    );
+    const p = new OllamaProvider('http://localhost:11434', fetchMock);
+    await expect(collect(p.chatStream(baseOpts))).rejects.toThrow(/404: model "nope" not found/);
+  });
+
+  it('throws on a mid-stream {"error"} line instead of ignoring it', async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          ndjsonStream([
+            JSON.stringify({ message: { content: 'par' }, done: false }),
+            JSON.stringify({ error: 'model runner has unexpectedly stopped' }),
+          ]),
+          { status: 200 },
+        ),
+    );
+    const p = new OllamaProvider('http://localhost:11434', fetchMock);
+    await expect(collect(p.chatStream(baseOpts))).rejects.toThrow(/unexpectedly stopped/);
+  });
+
   it('throws if response body is missing', async () => {
     const fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
     const p = new OllamaProvider('http://localhost:11434', fetchMock);
@@ -140,7 +253,7 @@ describe('OllamaProvider.chatStream', () => {
 
   it('passes signal to fetch', async () => {
     const fetchMock = vi.fn(
-      async (_url: string, init?: RequestInit) =>
+      async (_url: string, _init?: RequestInit) =>
         new Response(
           ndjsonStream([
             JSON.stringify({
@@ -156,6 +269,23 @@ describe('OllamaProvider.chatStream', () => {
     const ctrl = new AbortController();
     await collect(p.chatStream({ ...baseOpts, signal: ctrl.signal }));
     expect(fetchMock.mock.calls[0]?.[1]?.signal).toBe(ctrl.signal);
+  });
+});
+
+describe('OllamaProvider.pullModel', () => {
+  it('fails the pull when Ollama streams an error line (was reported as success)', async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          ndjsonStream([
+            JSON.stringify({ status: 'pulling manifest' }),
+            JSON.stringify({ error: 'pull model manifest: file does not exist' }),
+          ]),
+          { status: 200 },
+        ),
+    );
+    const p = new OllamaProvider('http://localhost:11434', fetchMock);
+    await expect(collect(p.pullModel('nope:1b'))).rejects.toThrow(/file does not exist/);
   });
 });
 

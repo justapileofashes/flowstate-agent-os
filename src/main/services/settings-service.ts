@@ -22,14 +22,15 @@ export const SECRET_SETTING_KEYS: ReadonlySet<string> = new Set([
   'groq_api_key',
   'mistral_api_key',
   'xai_api_key',
+  'custom_openai_api_key',
+  'brave_search_api_key',
+  'tavily_api_key',
   'alpaca_key_id',
   'alpaca_secret_key',
   'alpaca_live_key_id',
   'alpaca_live_secret_key',
   'trader_data_key_id',
   'trader_data_secret_key',
-  'license.jwt',
-  'license.refreshToken',
 ]);
 
 export class SettingsService {
