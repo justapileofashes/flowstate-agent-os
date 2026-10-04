@@ -74,6 +74,7 @@ export function setupBackground(opts: {
 
   app.on('second-instance', () => showWindow(opts.mainWindow()));
 
+  if (!opts.icon) console.warn('[background] no app icon found — no tray, so closing the window quits');
   if (opts.icon) {
     tray = new Tray(opts.icon.resize({ width: 16, height: 16 }));
     tray.setToolTip('Flowstate');

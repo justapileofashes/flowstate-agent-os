@@ -60,7 +60,14 @@ import {
   setupBackground,
   showWindow,
 } from './background';
-import { SEED_LEDGER_KEY, cleanupCandidates, createFromTemplate, parseLedger, planSeeding } from './agent-library';
+import {
+  SEED_LEDGER_KEY,
+  cleanupCandidates,
+  createFromTemplate,
+  parseLedger,
+  planSeeding,
+  templateGroups,
+} from './agent-library';
 import { registerIpcHandlers } from './ipc/register';
 import { getConnectedClis } from './ipc/handlers/clis';
 import { decideNotification } from './services/notify';
@@ -322,6 +329,15 @@ app.whenReady().then(async () => {
       existingIds: new Set(agentsNow.map((a) => a.id)),
       ledger: parseLedger(settings.get(SEED_LEDGER_KEY)),
     });
+    // Fresh install: migration 002 already created Code Helper without a toolset.
+    if (!plan.upgrade && parseLedger(settings.get(SEED_LEDGER_KEY)) === null) {
+      const helper = repo.getAgent('agent-code-helper');
+      const tpl = SEED_AGENTS.find((s) => s.id === 'agent-code-helper');
+      if (helper && tpl && !helper.toolPerms.groups) {
+        const { id: _id, workspacePath: _ws, createdAt: _c, updatedAt: _u, ...rest } = helper;
+        repo.updateAgent(helper.id, { ...rest, toolPerms: { ...helper.toolPerms, groups: templateGroups(tpl.specialtyTags) } });
+      }
+    }
     for (const id of plan.create) {
       const seed = SEED_AGENTS.find((s) => s.id === id);
       if (!seed) continue;

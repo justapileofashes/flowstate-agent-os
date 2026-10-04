@@ -25,6 +25,8 @@ export const CORE_AGENT_IDS = [
   'agent-stock-researcher',
 ] as const;
 
+const MIGRATION_SEEDED_ID = 'agent-code-helper';
+
 const BRAIN_TAGS = new Set([
   'research', 'notes', 'synthesis', 'writing', 'planning', 'pm', 'business', 'reports',
   'meetings', 'ideas', 'brainstorm', 'teaching', 'documentation', 'rag',
@@ -72,7 +74,9 @@ export function planSeeding(input: {
 }): SeedPlan {
   const core = CORE_AGENT_IDS.filter((id) => input.templateIds.includes(id));
   if (input.ledger === null) {
-    const upgrade = input.templateIds.some((id) => input.existingIds.has(id));
+    // agent-code-helper is created by DB migration 002 on every install, so it
+    // can't tell a fresh install from an upgrade; any other template can.
+    const upgrade = input.templateIds.some((id) => id !== MIGRATION_SEEDED_ID && input.existingIds.has(id));
     if (upgrade) {
       // Every template was seeded before; recreate nothing that's missing.
       return { create: [], ledger: [...input.templateIds], upgrade: true };
