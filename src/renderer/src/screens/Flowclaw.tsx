@@ -2,7 +2,7 @@
 // Hermes REST). Visual port of the Claude Design prototype
 // (.design-import/flowstate/project/flowclaw.jsx) wired to the real IPC surfaces.
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ipc } from '../lib/ipc';
 import type { AgentDto } from '@shared/chat-types';
 import type {
