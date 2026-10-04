@@ -18,6 +18,13 @@ describe('planSeeding', () => {
     expect(plan.upgrade).toBe(false);
   });
 
+  it('fresh install where migration 002 already created code-helper still seeds the core set', () => {
+    const plan = planSeeding({ templateIds: ids, existingIds: new Set(['agent-code-helper']), ledger: null });
+    expect(plan.upgrade).toBe(false);
+    expect(plan.create).toEqual(CORE_AGENT_IDS.filter((id) => id !== 'agent-code-helper'));
+    expect(plan.ledger).toEqual([...CORE_AGENT_IDS]);
+  });
+
   it('existing install (old build seeded everything) creates nothing and flags the upgrade', () => {
     const existing = new Set(ids.filter((id) => id !== 'agent-writer')); // user deleted one
     const plan = planSeeding({ templateIds: ids, existingIds: existing, ledger: null });
